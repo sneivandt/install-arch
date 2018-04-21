@@ -1,5 +1,13 @@
 #!/bin/bash
 
+# TODO:
+#   - LUKS on LVM
+#   - Disk encryption
+#   - Install AUR packages
+#   - Accept user input to decide if GUI will be installed
+#   - Accept user input to decide if virtualbox guest additions will be installed
+#   - Accept user input to decide what video drivers will be installed
+
 # Trap Error
 set -uo pipefail
 trap 'echo "$0: Error on line "$LINENO": $BASH_COMMAND"' ERR
@@ -20,7 +28,7 @@ device=$(dialog --stdout --menu "Select installtion disk" 0 0 0 ${devicelist}) |
 exec 1> >(tee "stdout.log")
 exec 2> >(tee "stderr.log")
 
-# ntp
+# Enable ntp
 timedatectl set-ntp true
 
 # Partitioning
@@ -47,12 +55,12 @@ p
 w
 EOF
 
-# Wipe Disks
+# Wipe Drives
 wipefs "$device"1
 wipefs "$device"2
 wipefs "$device"3
 
-# Filesystem
+# Make Filesystem
 mkfs.ext2 "$device"1
 mkswap "$device"2
 mkfs.ext4 "$device"3
@@ -64,25 +72,16 @@ mkdir /mnt/boot
 mount "$device"1 /mnt/boot
 
 # Update Mirrors
-curl -s 'https://www.archlinux.org/mirrorlist/?country=US&protocol=http&protocol=https&ip_version=4' > /etc/pacman.d/mirrorlist
+curl -s 'https://www.archlinux.org/mirrorlist/?country=US&protocol=https&ip_version=4' > /etc/pacman.d/mirrorlist
 sed -i 's/^#Server/Server/' /etc/pacman.d/mirrorlist
 
-# Yaourt repo
+# Pacstrap
 cat >>/etc/pacman.conf <<'EOF'
 [archlinuxfr]
 SigLevel = Never
 Server = http://repo.archlinux.fr/$arch
 EOF
-
-# Pacstrap
-pacstrap /mnt base base-devel ctags curl git grub ntp openssh tmux vim wget yaourt zip zsh
-
-# Yaourt repo
-cat >>/mnt/etc/pacman.conf <<'EOF'
-[archlinuxfr]
-SigLevel = Never
-Server = http://repo.archlinux.fr/$arch
-EOF
+pacstrap /mnt adobe-source-code-pro-fonts base base-devel compton ctags curl dmenu dunst feh git grub i3-gaps ntp openssh rxvt-unicode playerctl redshift tmux vim wget xautolock xf86-video-vesa xorg xorg-server xorg-xinit xterm yaourt zip zsh
 
 # Generate Filesystem Table
 genfstab -U /mnt >> /mnt/etc/fstab
@@ -105,22 +104,32 @@ arch-chroot /mnt systemctl enable dhcpcd
 # Enable ntpd
 arch-chroot /mnt systemctl enable ntpd
 
+# Set timezone
+arch chroot /mnt ln -sf /usr/share/zoneinfo/US/Pacific /etc/localtime
+
 # Create User
 arch-chroot /mnt useradd -mU -G wheel -s /usr/bin/zsh "$user"
 arch-chroot /mnt chsh -s /usr/bin/zsh "$user"
 arch-chroot /mnt sed -i '/^# %wheel ALL=(ALL) ALL$/s/^# //g' /etc/sudoers
 
+# Set Passwords
+echo "$user:$password" | chpasswd --root /mnt
+echo "root:$password" | chpasswd --root /mnt
+
+# AUR packages
+cat >>/mnt/etc/pacman.conf <<'EOF'
+[archlinuxfr]
+SigLevel = Never
+Server = http://repo.archlinux.fr/$arch
+EOF
+
 # Install dotfiles
 arch-chroot /mnt su "$user" -c "git clone https://github.com/sneivandt/dotfiles.git /home/$user/src/dotfiles"
-arch-chroot /mnt su "$user" -c "/home/$user/src/dotfiles/dotfiles.sh install"
+arch-chroot /mnt su "$user" -c "/home/$user/src/dotfiles/dotfiles.sh install --gui"
 
 # Install Grub
 arch-chroot /mnt grub-install "$device"
 arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
-
-# Set Passwords
-echo "$user:$password" | chpasswd --root /mnt
-echo "root:$password" | chpasswd --root /mnt
 
 # Cleanup
 umount -R /mnt
