@@ -9,6 +9,7 @@ set -uo pipefail
 trap 'echo "$0: Error on line "$LINENO": $BASH_COMMAND"' ERR
 
 # User Input
+mode=$(dialog --stdout --clear --menu "Select install mode" 0 0 0 "1" "Minimal" "2" "Worktation" "3" "VirtualBox") || exit
 hostname=$(dialog --stdout --clear --inputbox "Enter hostname" 0 40) || exit 1
 [ -z "$hostname" ] && echo "hostname cannot be empty" && exit 1
 user=$(dialog --stdout --clear --inputbox "Enter username" 0 40) || exit 1
@@ -16,13 +17,13 @@ user=$(dialog --stdout --clear --inputbox "Enter username" 0 40) || exit 1
 password1=$(dialog --stdout --clear --insecure --passwordbox "Enter password" 0 40) || exit 1
 [ -z "$password1" ] && echo "password cannot be empty" && exit 1
 password2=$(dialog --stdout --clear --insecure --passwordbox "Enter password again" 0 40) || exit 1
-[[ "$password1" == "$password2" ]] || ( echo "Passwords did not match" && exit 1 )
+if [ "$password1" != "$password2" ]; then echo "Passwords did not match"; exit; fi
 devicelist=$(lsblk -dplnx size -o name,size | grep -Ev "boot|rpmb|loop" | tac)
 device=$(dialog --stdout --clear --menu "Select installtion disk" 0 0 0 ${devicelist}) || exit 1
 password_luks1=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password" 0 40) || exit 1
 [ -z "$password_luks1" ] && echo "disk encryption password cannot be empty" && exit 1
 password_luks2=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password again" 0 40) || exit 1
-[[ "$password_luks1" == "$password_luks2" ]] || ( echo "Passwords did not match" && exit 1 )
+if [ "$password_luks1" != "$password_luks2" ]; then echo "Passwords did not match"; exit; fi
 
 # Logging
 exec 1> >(tee "stdout.log")
@@ -88,47 +89,68 @@ mount "$device"1 /mnt/boot
 curl -s 'https://www.archlinux.org/mirrorlist/?country=US&protocol=https&ip_version=4' > /etc/pacman.d/mirrorlist
 sed -i 's/^#Server/Server/' /etc/pacman.d/mirrorlist
 
-# Pacstrap
-cat >>/etc/pacman.conf <<'EOF'
-[archlinuxfr]
-SigLevel = Never
-Server = http://repo.archlinux.fr/$arch
-EOF
-pacstrap /mnt \
-  adobe-source-code-pro-fonts \
+# Base packages
+packages=(
   base \
   base-devel \
-  compton \
   ctags \
   curl \
-  dmenu \
-  dunst \
-  feh \
   git \
   grub \
-  i3-gaps \
+  neovim \
   ntp \
   openssh \
-  rxvt-unicode \
-  playerctl \
-  redshift \
-  thunar \
+  python-requests \
   tmux \
   vim \
   wget \
+  zip \
+  zsh
+)
+
+# Workastation Packages
+packages_gui=(
+  adobe-source-code-pro-fonts \
+  alsa-utils \
+  compton \
+  dmenu \
+  dunst \
+  feh \
+  i3lock \
+  i3-gaps \
+  imagemagick \
+  noto-fonts-cjk \
+  rxvt-unicode \
+  playerctl \
+  scrot \
+  redshift \
+  thunar \
+  ttf-font-awesome \
   xautolock \
   xf86-video-vesa \
   xorg \
   xorg-server \
   xorg-xinit \
-  xterm \
-  yaourt \
-  zip \
-  zsh
+  xterm
+)
 
-# TODO: Accept user input to decide if xorg/GUI applicaitons will be installed
-# TODO: Accept user input to decide if virtualbox guest additions will be installed
-# TODO: Accept user input to decide what video drivers will be installed
+# Virtualbox Packages
+packages_vbox=(
+  virtualbox-guest-utils
+)
+
+# Select packages
+case "$mode" in
+  2)
+    packages=( "${packages[@]}" "${packages_gui[@]}" )
+    ;;
+  3)
+    packages=( "${packages[@]}" "${packages_gui[@]}" "${packages_vbox[@]}" )
+    ;;
+esac
+
+# Pacstrap
+pacstrap /mnt "${packages[@]}"
 
 # }}}
 # General ----------------------------------------------------------------- {{{
@@ -164,12 +186,25 @@ arch-chroot /mnt ln -sf /usr/share/zoneinfo/US/Pacific /etc/localtime
 #
 # Install AUR packages
 
-cat >>/mnt/etc/pacman.conf <<'EOF'
-[archlinuxfr]
-SigLevel = Never
-Server = http://repo.archlinux.fr/$arch
-EOF
-# TODO: Use yaourt to install AUR packages
+# Create User
+arch-chroot /mnt useradd -m -d /opt/trizen trizen
+echo "trizen ALL=(ALL) NOPASSWD: ALL" >> /mnt/etc/sudoers
+
+# Install trizen
+arch-chroot /mnt su trizen -c "git clone https://aur.archlinux.org/trizen-git.git /opt/trizen/trizen-git && cd /opt/trizen/trizen-git && makepkg -si --noconfirm"
+
+# Install packages
+case "$mode" in
+  2|3)
+    arch-chroot /mnt su trizen -c "trizen --noconfirm -S \
+      google-chrome-beta \
+      otf-font-awesome-5-free \
+      polybar \
+      spotify \
+      vertex-themes \
+      visual-studio-code-insiders"
+    ;;
+esac
 
 # }}}
 # Users  ------------------------------------------------------------------ {{{
