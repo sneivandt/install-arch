@@ -14,10 +14,6 @@ hostname=$(dialog --stdout --clear --inputbox "Enter hostname" 0 40) || exit 1
 [ -z "$hostname" ] && echo "hostname cannot be empty" && exit 1
 user=$(dialog --stdout --clear --inputbox "Enter username" 0 40) || exit 1
 [ -z "$user" ] && echo "username cannot be empty" && exit 1
-password1=$(dialog --stdout --clear --insecure --passwordbox "Enter password" 0 40) || exit 1
-[ -z "$password1" ] && echo "password cannot be empty" && exit 1
-password2=$(dialog --stdout --clear --insecure --passwordbox "Enter password again" 0 40) || exit 1
-if [ "$password1" != "$password2" ]; then echo "Passwords did not match"; exit; fi
 devicelist=$(lsblk -dplnx size -o name,size | grep -Ev "boot|rpmb|loop" | tac)
 device=$(dialog --stdout --clear --menu "Select installtion disk" 0 0 0 ${devicelist}) || exit 1
 password_luks1=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password" 0 40) || exit 1
@@ -86,8 +82,9 @@ mount "$device"1 /mnt/boot
 # Install packages
 
 # Update Mirrors
-curl -s 'https://www.archlinux.org/mirrorlist/?country=US&protocol=https&ip_version=4' > /etc/pacman.d/mirrorlist
-sed -i 's/^#Server/Server/' /etc/pacman.d/mirrorlist
+curl -s 'https://www.archlinux.org/mirrorlist/?country=US&protocol=https&ip_version=4' > /etc/pacman.d/mirrorlist.new
+sed -i 's/^#Server/Server/' /etc/pacman.d/mirrorlist.new
+rankmirrors /etc/pacman.d/mirrorlist.new > /etc/pacman.d/mirrorlist
 
 # Base packages
 packages=(
@@ -220,10 +217,6 @@ arch-chroot /mnt sed -i '/^# %wheel ALL=(ALL) ALL$/s/^# //g' /etc/sudoers
 arch-chroot /mnt su "$user" -c "git clone https://github.com/sneivandt/dotfiles.git /home/$user/src/dotfiles"
 arch-chroot /mnt su "$user" -c "/home/$user/src/dotfiles/dotfiles.sh install --gui"
 
-# Set Passwords
-echo "root:$password1" | chpasswd --root /mnt
-echo "$user:$password1" | chpasswd --root /mnt
-
 # }}}
 # Init -------------------------------------------------------------------- {{{
 #
@@ -244,7 +237,7 @@ sed -i "s/.*vmlinuz-linux.*/linux \\/vmlinuz-linux root=\\/dev\\/mapper\\/volgro
 #
 # Complete setup
 
-# Release resources
+# Release Resources
 umount -R /mnt
 swapoff -a
 
