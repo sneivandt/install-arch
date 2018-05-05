@@ -8,14 +8,23 @@
 set -uo pipefail
 trap 'echo "$0: Error on line "$LINENO": $BASH_COMMAND"' ERR
 
-# User Input
+# Install mode
 mode=$(dialog --stdout --clear --menu "Select install mode" 0 0 0 "1" "Minimal" "2" "Worktation" "3" "VirtualBox") || exit
+
+# Hostname
 hostname=$(dialog --stdout --clear --inputbox "Enter hostname" 0 40) || exit 1
 [ -z "$hostname" ] && echo "hostname cannot be empty" && exit 1
+
+# Username
 user=$(dialog --stdout --clear --inputbox "Enter username" 0 40) || exit 1
 [ -z "$user" ] && echo "username cannot be empty" && exit 1
+
+# Installation disk
 devicelist=$(lsblk -dplnx size -o name,size | grep -Ev "boot|rpmb|loop" | tac)
-device=$(dialog --stdout --clear --menu "Select installtion disk" 0 0 0 ${devicelist}) || exit 1
+# shellcheck disable=SC2086
+device=$(dialog --stdout --clear --menu "Select installation disk" 0 0 0 ${devicelist}) || exit 1
+
+# Encryption password
 password_luks1=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password" 0 40) || exit 1
 [ -z "$password_luks1" ] && echo "disk encryption password cannot be empty" && exit 1
 password_luks2=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password again" 0 40) || exit 1
@@ -86,7 +95,7 @@ curl -s 'https://www.archlinux.org/mirrorlist/?country=US&protocol=https&ip_vers
 sed -i 's/^#Server/Server/' /etc/pacman.d/mirrorlist.new
 rankmirrors /etc/pacman.d/mirrorlist.new > /etc/pacman.d/mirrorlist
 
-# Base packages
+# Base Packages
 packages=(
   base \
   base-devel \
@@ -124,19 +133,26 @@ packages_gui=(
   thunar \
   ttf-font-awesome \
   xautolock \
-  xf86-video-vesa \
   xorg \
   xorg-server \
   xorg-xinit \
   xterm
 )
 
+# Video Drivers
+if lspci | grep -e VGA -e 3D | grep -qe nvidia
+then
+  packages_gui=( "${packages_gui[@]}" "nvidia" )
+else
+  packages_gui=( "${packages_gui[@]}" "xf86-video-vesa" )
+fi
+
 # Virtualbox Packages
 packages_vbox=(
   virtualbox-guest-utils
 )
 
-# Select packages
+# Select Packages
 case "$mode" in
   2)
     packages=( "${packages[@]}" "${packages_gui[@]}" )
@@ -148,6 +164,12 @@ esac
 
 # Pacstrap
 pacstrap /mnt "${packages[@]}"
+
+# Configure pacman
+cat >>/mnt/etc/pacman.conf <<'EOF'
+[options]
+ILoveCandy
+EOF
 
 # }}}
 # General ----------------------------------------------------------------- {{{
@@ -165,9 +187,19 @@ cat >>/mnt/etc/hosts <<'EOF'
 127.0.0.1 "$hostname".localdomain "$hostname"
 EOF
 
+# Google DNS
+cat >>/mnt/etc/resolv.conf <<'EOF'
+nameserver 8.8.8.8
+nameserver 8.8.4.4
+EOF
+chattr +i /mnt/etc/resolv.conf
+
 # Set Locale
 echo "en_US.UTF-8 UTF-8" > /mnt/etc/locale.gen
 arch-chroot /mnt locale-gen
+
+# Set Time Zone
+ln -sf /mnt/usr/share/zoneinfo/US/Pacific /mnt/etc/localtime
 
 # Enable dhcpcd
 arch-chroot /mnt systemctl enable dhcpcd
@@ -175,8 +207,8 @@ arch-chroot /mnt systemctl enable dhcpcd
 # Enable ntpd
 arch-chroot /mnt systemctl enable ntpd
 
-# Set Time Zone
-arch-chroot /mnt ln -sf /usr/share/zoneinfo/US/Pacific /etc/localtime
+# Enable vboxservice
+[ "$mode" -eq 3 ] && arch-chroot /mnt systemctl enable vboxservice
 
 # }}}
 # AUR --------------------------------------------------------------------- {{{
@@ -190,16 +222,14 @@ echo "trizen ALL=(ALL) NOPASSWD: ALL" >> /mnt/etc/sudoers
 # Install trizen
 arch-chroot /mnt su trizen -c "git clone https://aur.archlinux.org/trizen-git.git /opt/trizen/trizen-git && cd /opt/trizen/trizen-git && makepkg -si --noconfirm"
 
-# Install packages
+# Install Packages
 case "$mode" in
   2|3)
     arch-chroot /mnt su trizen -c "trizen --noconfirm -S \
       google-chrome-beta \
       otf-font-awesome-5-free \
       polybar \
-      spotify \
-      vertex-themes \
-      visual-studio-code-insiders"
+      vertex-themes"
     ;;
 esac
 
@@ -211,7 +241,7 @@ esac
 # Create User
 arch-chroot /mnt useradd -mU -G wheel -s /usr/bin/zsh "$user"
 arch-chroot /mnt chsh -s /usr/bin/zsh "$user"
-arch-chroot /mnt sed -i '/^# %wheel ALL=(ALL) ALL$/s/^# //g' /etc/sudoers
+sed -i '/^# %wheel ALL=(ALL) ALL$/s/^# //g' /mnt/etc/sudoers
 
 # Install sneivandt/dotfiles
 arch-chroot /mnt su "$user" -c "git clone https://github.com/sneivandt/dotfiles.git /home/$user/src/dotfiles"
