@@ -8,7 +8,7 @@
 set -uo pipefail
 trap 'echo "$0: Error on line "$LINENO": $BASH_COMMAND"' ERR
 
-# Install mode
+# Install Mode
 mode=$(dialog --stdout --clear --menu "Select install mode" 0 0 0 "1" "Minimal" "2" "Worktation" "3" "VirtualBox") || exit
 
 # Hostname
@@ -19,12 +19,12 @@ hostname=$(dialog --stdout --clear --inputbox "Enter hostname" 0 40) || exit 1
 user=$(dialog --stdout --clear --inputbox "Enter username" 0 40) || exit 1
 [ -z "$user" ] && echo "username cannot be empty" && exit 1
 
-# Installation disk
+# Installation Disk
 devicelist=$(lsblk -dplnx size -o name,size | grep -Ev "boot|rpmb|loop" | tac)
 # shellcheck disable=SC2086
 device=$(dialog --stdout --clear --menu "Select installation disk" 0 0 0 ${devicelist}) || exit 1
 
-# Encryption password
+# Encryption Password
 password_luks1=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password" 0 40) || exit 1
 [ -z "$password_luks1" ] && echo "disk encryption password cannot be empty" && exit 1
 password_luks2=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password again" 0 40) || exit 1
@@ -118,6 +118,7 @@ packages=(
 packages_gui=(
   adobe-source-code-pro-fonts \
   alsa-utils \
+  chromium \
   compton \
   dmenu \
   dunst \
@@ -226,7 +227,7 @@ arch-chroot /mnt su trizen -c "git clone https://aur.archlinux.org/trizen-git.gi
 case "$mode" in
   2|3)
     arch-chroot /mnt su trizen -c "trizen --noconfirm -S \
-      google-chrome-beta \
+      chromium-widevine \
       otf-font-awesome-5-free \
       polybar \
       vertex-themes"
