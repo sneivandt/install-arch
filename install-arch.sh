@@ -30,6 +30,15 @@ password_luks1=$(dialog --stdout --clear --insecure --passwordbox "Enter disk en
 password_luks2=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password again" 0 40) || exit 1
 if [ "$password_luks1" != "$password_luks2" ]; then echo "Passwords did not match"; exit; fi
 
+# Nvidia Video Driver
+nvidia_driver=""
+if [ "$mode" == 2 ] && lspci | grep -e VGA -e 3D | grep -q NVIDIA
+then
+  nvidia_drivers=(0 nvidia 1 nvidia-340xx 2 nvidia-390xx 3 xf86-video-nouveau)
+  # shellcheck disable=SC2068
+  nvidia_driver="${nvidia_drivers[($(dialog --stdout --clear --menu "Select video driver" 0 0 0 ${nvidia_drivers[@]}) + 1) * 2 - 1]}" || exit 
+fi
+
 # Logging
 exec 1> >(tee "stdout.log")
 exec 2> >(tee "stderr.log")
@@ -141,9 +150,9 @@ packages_gui=(
 )
 
 # Video Drivers
-if lspci | grep -e VGA -e 3D | grep -qe nvidia
+if [ -n "$nvidia_driver" ]
 then
-  packages_gui=( "${packages_gui[@]}" "nvidia" )
+  packages_gui=( "${packages_gui[@]}" "$nvidia_driver" )
 else
   packages_gui=( "${packages_gui[@]}" "xf86-video-vesa" )
 fi
