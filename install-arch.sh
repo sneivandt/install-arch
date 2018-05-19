@@ -19,6 +19,12 @@ hostname=$(dialog --stdout --clear --inputbox "Enter hostname" 0 40) || exit 1
 user=$(dialog --stdout --clear --inputbox "Enter username" 0 40) || exit 1
 [ -z "$user" ] && echo "username cannot be empty" && exit 1
 
+# User Password
+password1=$(dialog --stdout --clear --insecure --passwordbox "Enter password" 0 40) || exit 1
+[ -z "$password1" ] && echo "password cannot be empty" && exit 1
+password2=$(dialog --stdout --clear --insecure --passwordbox "Enter password again" 0 40) || exit 1
+if [ "$password1" != "$password2" ]; then echo "Passwords did not match"; exit; fi
+
 # Installation Disk
 devicelist=$(lsblk -dplnx size -o name,size | grep -Ev "boot|rpmb|loop" | tac)
 # shellcheck disable=SC2086
@@ -249,9 +255,12 @@ esac
 # Configure users
 
 # Create User
-arch-chroot /mnt useradd -mU -G wheel -s /usr/bin/zsh "$user"
+arch-chroot /mnt useradd -mU -G wheel -s /usr/bin/zsh -p "$(openssl passwd -1 "$password1")" "$user"
 arch-chroot /mnt chsh -s /usr/bin/zsh "$user"
 sed -i '/^# %wheel ALL=(ALL) ALL$/s/^# //g' /mnt/etc/sudoers
+
+# Lock root
+arch-chroot /mnt passwd -l root
 
 # Install sneivandt/dotfiles
 arch-chroot /mnt su "$user" -c "git clone https://github.com/sneivandt/dotfiles.git /home/$user/src/dotfiles"
