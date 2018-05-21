@@ -118,10 +118,12 @@ packages=(
   curl \
   git \
   grub \
+  linux-headers \
   neovim \
   ntp \
   openssh \
   python-requests \
+  shellcheck \
   tmux \
   vim \
   wget \
@@ -215,7 +217,7 @@ echo "en_US.UTF-8 UTF-8" > /mnt/etc/locale.gen
 arch-chroot /mnt locale-gen
 
 # Set Time Zone
-ln -sf /mnt/usr/share/zoneinfo/US/Pacific /mnt/etc/localtime
+arch-chroot /mnt ln -sf /usr/share/zoneinfo/US/Pacific /etc/localtime
 
 # Enable dhcpcd
 arch-chroot /mnt systemctl enable dhcpcd
@@ -231,7 +233,7 @@ arch-chroot /mnt systemctl enable ntpd
 #
 # Install AUR packages
 
-# Create User
+# Create trizen User
 arch-chroot /mnt useradd -m -d /opt/trizen trizen
 echo "trizen ALL=(ALL) NOPASSWD: ALL" >> /mnt/etc/sudoers
 
@@ -243,11 +245,17 @@ case "$mode" in
   2|3)
     arch-chroot /mnt su trizen -c "trizen --noconfirm -S \
       chromium-widevine \
-      otf-font-awesome-5-free \
+      otf-font-awesome \
       polybar \
-      vertex-themes"
+      vertex-themes \
+      visual-studio-code-insiders"
     ;;
 esac
+
+# Cleanup trizen User
+arch-chroot /mnt userdel trizen
+rm -rf /mnt/opt/trizen
+sed -i '/trizen/d' /mnt/etc/sudoers
 
 # }}}
 # Users  ------------------------------------------------------------------ {{{
