@@ -108,7 +108,6 @@ mount "$device"1 /mnt/boot
 # Update Mirrors
 curl -s 'https://www.archlinux.org/mirrorlist/?country=US&protocol=https&ip_version=4' > /etc/pacman.d/mirrorlist.new
 sed -i 's/^#Server/Server/' /etc/pacman.d/mirrorlist.new
-rankmirrors /etc/pacman.d/mirrorlist.new > /etc/pacman.d/mirrorlist
 
 # Base Packages
 packages=(
@@ -122,6 +121,7 @@ packages=(
   neovim \
   ntp \
   openssh \
+  pacman-contrib \
   python-requests \
   shellcheck \
   tmux \
