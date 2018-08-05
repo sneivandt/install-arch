@@ -115,6 +115,7 @@ packages=(
   base-devel \
   ctags \
   curl \
+  docker \
   git \
   grub \
   linux-headers \
@@ -222,6 +223,9 @@ arch-chroot /mnt ln -sf /usr/share/zoneinfo/US/Pacific /etc/localtime
 # Enable dhcpcd
 arch-chroot /mnt systemctl enable dhcpcd
 
+# Enable docker
+arch-chroot /mnt systemctl enable docker
+
 # Enable ntpd
 arch-chroot /mnt systemctl enable ntpd
 
@@ -263,7 +267,7 @@ sed -i '/trizen/d' /mnt/etc/sudoers
 # Configure users
 
 # Create User
-arch-chroot /mnt useradd -mU -G wheel -s /usr/bin/zsh -p "$(openssl passwd -1 "$password1")" "$user"
+arch-chroot /mnt useradd -mU -G docker,wheel -s /usr/bin/zsh -p "$(openssl passwd -1 "$password1")" "$user"
 arch-chroot /mnt chsh -s /usr/bin/zsh "$user"
 sed -i '/^# %wheel ALL=(ALL) ALL$/s/^# //g' /mnt/etc/sudoers
 
