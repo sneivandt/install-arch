@@ -123,6 +123,7 @@ packages=(
   ntp \
   openssh \
   pacman-contrib \
+  python-pip \
   python-requests \
   shellcheck \
   tmux \
