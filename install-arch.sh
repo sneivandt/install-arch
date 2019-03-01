@@ -146,8 +146,6 @@ packages_gui=(
   dmenu \
   dunst \
   feh \
-  i3lock \
-  i3-gaps \
   imagemagick \
   noto-fonts-cjk \
   rxvt-unicode \
@@ -158,6 +156,8 @@ packages_gui=(
   ttf-dejavu \
   ttf-font-awesome \
   xautolock \
+  xmonad \
+  xmonad-contrib \
   xorg \
   xorg-server \
   xorg-xinit \
@@ -256,7 +256,6 @@ case "$mode" in
     arch-chroot /mnt su trizen -c "trizen --noconfirm -S \
       chromium-widevine \
       otf-font-awesome \
-      polybar \
       vertex-themes \
       visual-studio-code-insiders"
     ;;
