@@ -106,7 +106,7 @@ mount "$device"1 /mnt/boot
 # Install packages
 
 # Update Mirrors
-curl -s 'https://www.archlinux.org/mirrorlist/?country=US&protocol=https&ip_version=4' | sed 's/^#Server/Server/' | rankmirrors -n 6 - > /etc/pacman.d/mirrorlist
+curl -s 'https://www.archlinux.org/mirrorlist/?country=US&protocol=https&ip_version=4' | sed 's/^#Server/Server/' > /etc/pacman.d/mirrorlist
 
 # Update Keys
 pacman-key --refresh-keys
