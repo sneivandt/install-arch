@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Preamble ---------------------------------------------------------------- {{{
 #
@@ -106,9 +106,7 @@ mount "$device"1 /mnt/boot
 # Install packages
 
 # Update Mirrors
-curl -s 'https://www.archlinux.org/mirrorlist/?country=US&protocol=https&ip_version=4' > /etc/pacman.d/mirrorlist.new
-sed -i 's/^#Server/Server/' /etc/pacman.d/mirrorlist.new
-rankmirrors -n 6 /etc/pacman.d/mirrorlist.new > /etc/pacman.d/mirrorlist
+curl -s 'https://www.archlinux.org/mirrorlist/?country=US&protocol=https&ip_version=4' | sed 's/^#Server/Server/' | rankmirrors -n 6 - > /etc/pacman.d/mirrorlist
 
 # Update Keys
 pacman-key --refresh-keys
@@ -117,12 +115,14 @@ pacman-key --refresh-keys
 packages=(
   base \
   base-devel \
+  cronie \
   ctags \
   curl \
   docker \
   git \
   grub \
   linux-headers \
+  mlocate \
   neovim \
   ntp \
   openssh \
@@ -146,11 +146,9 @@ packages_gui=(
   dmenu \
   dunst \
   feh \
-  imagemagick \
   noto-fonts-cjk \
   rxvt-unicode \
   playerctl \
-  scrot \
   redshift \
   thunar \
   ttf-dejavu \
@@ -194,6 +192,7 @@ pacstrap /mnt "${packages[@]}"
 cat >>/mnt/etc/pacman.conf <<'EOF'
 [options]
 ILoveCandy
+Color
 EOF
 
 # }}}
@@ -225,6 +224,9 @@ arch-chroot /mnt locale-gen
 
 # Set Time Zone
 arch-chroot /mnt ln -sf /usr/share/zoneinfo/US/Pacific /etc/localtime
+
+# Enable cronie
+arch-chroot /mnt systemctl enable cronie
 
 # Enable dhcpcd
 arch-chroot /mnt systemctl enable dhcpcd
@@ -274,14 +276,20 @@ sed -i '/trizen/d' /mnt/etc/sudoers
 # Create User
 arch-chroot /mnt useradd -mU -G docker,wheel -s /usr/bin/zsh -p "$(openssl passwd -1 "$password1")" "$user"
 arch-chroot /mnt chsh -s /usr/bin/zsh "$user"
-sed -i '/^# %wheel ALL=(ALL) ALL$/s/^# //g' /mnt/etc/sudoers
+
+# Allow sudo without password
+sed -i '/^# %wheel ALL=(ALL) NOPASSWD: ALL$/s/^# //g' /mnt/etc/sudoers
 
 # Lock root
 arch-chroot /mnt passwd -l root
 
-# Install sneivandt/dotfiles
+# Install dotfiles
 arch-chroot /mnt su "$user" -c "git clone https://github.com/sneivandt/dotfiles.git /home/$user/src/dotfiles"
-arch-chroot /mnt su "$user" -c "/home/$user/src/dotfiles/dotfiles.sh install --gui"
+arch-chroot /mnt su "$user" -c "/home/$user/src/dotfiles/dotfiles.sh install --gui --sudo"
+
+# Require password for sudo
+sed -i '/^%wheel ALL=(ALL) NOPASSWD: ALL$/s/^/# /g' /mnt/etc/sudoers
+sed -i '/^# %wheel ALL=(ALL) ALL$/s/^# //g' /mnt/etc/sudoers
 
 # }}}
 # Init -------------------------------------------------------------------- {{{
