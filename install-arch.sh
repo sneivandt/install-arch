@@ -154,6 +154,7 @@ packages_gui=(
   ttf-dejavu \
   ttf-font-awesome \
   xautolock \
+  xmobar \
   xmonad \
   xmonad-contrib \
   xorg \
@@ -217,6 +218,10 @@ nameserver 8.8.8.8
 nameserver 8.8.4.4
 EOF
 chattr +i /mnt/etc/resolv.conf
+
+# Volume
+arch-chroot /mnt mixer -q sset Master 100%
+arch-chroot /mnt alsactl store
 
 # Set Locale
 echo "en_US.UTF-8 UTF-8" > /mnt/etc/locale.gen
