@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-# Preamble ---------------------------------------------------------------- {{{
+# Input ------------------------------------------------------------------- {{{
 #
-# Prepare for execution
+# User input
 
 # Error Trap
 set -uo pipefail
@@ -129,6 +129,7 @@ packages=(
   pacman-contrib \
   python-pip \
   python-requests \
+  ranger \
   shellcheck \
   tmux \
   vim \
@@ -150,13 +151,14 @@ packages_gui=(
   rxvt-unicode \
   playerctl \
   redshift \
-  thunar \
+  slock \
   ttf-dejavu \
   ttf-font-awesome \
   xautolock \
   xmobar \
   xmonad \
   xmonad-contrib \
+  xclip \
   xorg \
   xorg-server \
   xorg-xinit \
