@@ -148,6 +148,7 @@ packages_gui=(
   dunst \
   feh \
   noto-fonts-cjk \
+  noto-fonts-emoji \
   rxvt-unicode \
   playerctl \
   redshift \
