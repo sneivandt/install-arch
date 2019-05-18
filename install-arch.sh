@@ -118,6 +118,7 @@ packages=(
   cronie \
   ctags \
   curl \
+  dash \
   docker \
   git \
   grub \
@@ -206,6 +207,21 @@ EOF
 
 # Generate Filesystem Table
 genfstab -U /mnt >> /mnt/etc/fstab
+
+# sh -> dash
+arch-chroot /mnt ln -sfT dash /usr/bin/sh
+cat >>/mnt/etc/pacman.d/hooks/dash.hook <<'EOF'
+[Trigger]
+Type = Package
+Operation = Install
+Operation = Upgrade
+Target = bash
+[Action]
+Description = Re-pointing /bin/sh symlink to dash...
+When = PostTransaction
+Exec = /usr/bin/ln -sfT dash /usr/bin/sh
+Depends = dash
+EOF
 
 # Set Hostname
 echo "$hostname" > /mnt/etc/hostname
