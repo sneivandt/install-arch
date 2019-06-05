@@ -223,6 +223,20 @@ Exec = /usr/bin/ln -sfT dash /usr/bin/sh
 Depends = dash
 EOF
 
+# xmonad --recompile
+cat >>/mnt/etc/pacman.d/hooks/xmonad.hook <<'EOF'
+[Trigger]
+Type = Package
+Operation = Install
+Operation = Upgrade
+Target = xmonad
+[Action]
+Description = Recompile xmonad
+When = PostTransaction
+Exec = /usr/bin/xmonad --recompile
+Depends = xmonad
+EOF
+
 # Set Hostname
 echo "$hostname" > /mnt/etc/hostname
 cat >>/mnt/etc/hosts <<'EOF'
@@ -309,7 +323,7 @@ arch-chroot /mnt passwd -l root
 
 # Install dotfiles
 arch-chroot /mnt su "$user" -c "git clone https://github.com/sneivandt/dotfiles.git /home/$user/src/dotfiles"
-arch-chroot /mnt su "$user" -c "/home/$user/src/dotfiles/dotfiles.sh install --gui --sudo"
+arch-chroot /mnt su "$user" -c "/home/$user/src/dotfiles/dotfiles.sh install -gs"
 
 # Require password for sudo
 sed -i '/^%wheel ALL=(ALL) NOPASSWD: ALL$/s/^/# /g' /mnt/etc/sudoers
