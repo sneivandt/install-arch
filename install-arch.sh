@@ -323,7 +323,7 @@ arch-chroot /mnt passwd -l root
 
 # Install dotfiles
 arch-chroot /mnt su "$user" -c "git clone https://github.com/sneivandt/dotfiles.git /home/$user/src/dotfiles"
-arch-chroot /mnt su "$user" -c "/home/$user/src/dotfiles/dotfiles.sh install -gs"
+arch-chroot /mnt su "$user" -c "/home/$user/src/dotfiles/dotfiles.sh --install -gs"
 
 # Require password for sudo
 sed -i '/^%wheel ALL=(ALL) NOPASSWD: ALL$/s/^/# /g' /mnt/etc/sudoers
