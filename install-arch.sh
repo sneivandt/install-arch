@@ -295,6 +295,7 @@ case "$mode" in
   2|3)
     arch-chroot /mnt su trizen -c "trizen --noconfirm -S \
       chromium-widevine \
+      fzf \
       otf-font-awesome \
       vertex-themes \
       visual-studio-code-insiders"
