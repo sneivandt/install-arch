@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
+set -o errexit
+set -u nounset
+set -o pipefail
 
 # Input ------------------------------------------------------------------- {{{
 #
 # User input
 
 # Error Trap
-set -uo pipefail
 trap 'echo "$0: Error on line "$LINENO": $BASH_COMMAND"' ERR
 
-# Install Mode
+# Install mode
 mode=$(dialog --stdout --clear --menu "Select install mode" 0 0 0 "1" "Minimal" "2" "Worktation" "3" "VirtualBox") || exit
 
 # Hostname
@@ -19,30 +21,30 @@ hostname=$(dialog --stdout --clear --inputbox "Enter hostname" 0 40) || exit 1
 user=$(dialog --stdout --clear --inputbox "Enter username" 0 40) || exit 1
 [ -z "$user" ] && echo "username cannot be empty" && exit 1
 
-# User Password
+# User password
 password1=$(dialog --stdout --clear --insecure --passwordbox "Enter password" 0 40) || exit 1
 [ -z "$password1" ] && echo "password cannot be empty" && exit 1
 password2=$(dialog --stdout --clear --insecure --passwordbox "Enter password again" 0 40) || exit 1
 if [ "$password1" != "$password2" ]; then echo "Passwords did not match"; exit; fi
 
-# Installation Disk
+# Installation disk
 devicelist=$(lsblk -dplnx size -o name,size | grep -Ev "boot|rpmb|loop" | tac)
 # shellcheck disable=SC2086
 device=$(dialog --stdout --clear --menu "Select installation disk" 0 0 0 ${devicelist}) || exit 1
 
-# Encryption Password
+# Encryption password
 password_luks1=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password" 0 40) || exit 1
 [ -z "$password_luks1" ] && echo "disk encryption password cannot be empty" && exit 1
 password_luks2=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password again" 0 40) || exit 1
 if [ "$password_luks1" != "$password_luks2" ]; then echo "Passwords did not match"; exit; fi
 
-# Nvidia Video Driver
-nvidia_driver=""
+# Video driver
+video_driver=""
 if [ "$mode" == 2 ] && lspci | grep -e VGA -e 3D | grep -q NVIDIA
 then
-  nvidia_drivers=(0 nvidia 1 nvidia-340xx 2 nvidia-390xx 3 xf86-video-nouveau)
+  video_drivers=(0 nvidia 1 nvidia-340xx 2 nvidia-390xx 3 xf86-video-nouveau)
   # shellcheck disable=SC2068
-  nvidia_driver="${nvidia_drivers[($(dialog --stdout --clear --menu "Select video driver" 0 0 0 ${nvidia_drivers[@]}) + 1) * 2 - 1]}" || exit 
+  video_driver="${video_drivers[($(dialog --stdout --clear --menu "Select video driver" 0 0 0 ${video_drivers[@]}) + 1) * 2 - 1]}" || exit
 fi
 
 # Logging
@@ -50,9 +52,9 @@ exec 1> >(tee "stdout.log")
 exec 2> >(tee "stderr.log")
 
 # }}}
-# Disks ------------------------------------------------------------------- {{{
+# Disk -------------------------------------------------------------------- {{{
 #
-# Setup the disks
+# Setup the disk
 
 # Partitioning
 fdisk "$device" <<'EOF'
@@ -73,28 +75,28 @@ t
 w
 EOF
 
-# Encrypt Root Drive
+# Encrypt root drive
 echo -n "$password_luks1" | cryptsetup luksFormat --type luks2 "$device"2 -
 
-# Open Root Drive
+# Open root drive
 echo -n "$password_luks1" | cryptsetup open "$device"2 cryptlvm -
 
-# Create Physical Volume
+# Create physical volume
 pvcreate /dev/mapper/cryptlvm
 
-# Create Volume Group
+# Create volume group
 vgcreate volgroup0 /dev/mapper/cryptlvm
 
-# Create Logical Volumes
+# Create logical volumes
 lvcreate -L 1G volgroup0 -n swap
 lvcreate -l 100%FREE volgroup0 -n root
 
-# Fromat Filesystems
+# Format
 mkswap /dev/mapper/volgroup0-swap
 mkfs.ext4 /dev/mapper/volgroup0-root
 mkfs.ext2 "$device"1
 
-# Mount Filesystems
+# Mount
 mount /dev/mapper/volgroup0-root /mnt
 swapon /dev/mapper/volgroup0-swap
 mkdir /mnt/boot
@@ -105,17 +107,16 @@ mount "$device"1 /mnt/boot
 #
 # Install packages
 
-# Update Mirrors
+# Update mirrors
 curl -s 'https://www.archlinux.org/mirrorlist/?country=US&protocol=https&ip_version=4' | sed 's/^#Server/Server/' > /etc/pacman.d/mirrorlist
 
-# Update Keys
+# Update keys
 pacman-key --refresh-keys
 
-# Base Packages
+# Base packages
 packages=(
   base \
   base-devel \
-  cronie \
   ctags \
   curl \
   dash \
@@ -139,7 +140,7 @@ packages=(
   zsh
 )
 
-# Workastation Packages
+# Workastation packages
 packages_gui=(
   adobe-source-code-pro-fonts \
   alsa-utils \
@@ -167,20 +168,20 @@ packages_gui=(
   xterm
 )
 
-# Video Drivers
-if [ -n "$nvidia_driver" ]
+# Video drivers
+if [ -n "$video_driver" ]
 then
-  packages_gui=( "${packages_gui[@]}" "$nvidia_driver" )
+  packages_gui=( "${packages_gui[@]}" "$video_driver" )
 else
   packages_gui=( "${packages_gui[@]}" "xf86-video-vesa" )
 fi
 
-# Virtualbox Packages
+# Virtualbox packages
 packages_vbox=(
   virtualbox-guest-utils
 )
 
-# Select Packages
+# Select packages
 case "$mode" in
   2)
     packages=( "${packages[@]}" "${packages_gui[@]}" )
@@ -205,7 +206,7 @@ EOF
 #
 # General system config
 
-# Generate Filesystem Table
+# Generate filesystem table
 genfstab -U /mnt >> /mnt/etc/fstab
 
 # sh -> dash
@@ -237,7 +238,7 @@ Exec = /usr/bin/xmonad --recompile
 Depends = xmonad
 EOF
 
-# Set Hostname
+# Set hostname
 echo "$hostname" > /mnt/etc/hostname
 cat >>/mnt/etc/hosts <<'EOF'
 127.0.0.1 localhost.localdomain localhost
@@ -256,11 +257,11 @@ chattr +i /mnt/etc/resolv.conf
 arch-chroot /mnt mixer -q sset Master 100%
 arch-chroot /mnt alsactl store
 
-# Set Locale
+# Set locale
 echo "en_US.UTF-8 UTF-8" > /mnt/etc/locale.gen
 arch-chroot /mnt locale-gen
 
-# Set Time Zone
+# Set time zone
 arch-chroot /mnt ln -sf /usr/share/zoneinfo/US/Pacific /etc/localtime
 
 # Enable cronie
@@ -283,14 +284,14 @@ arch-chroot /mnt systemctl enable ntpd
 #
 # Install AUR packages
 
-# Create trizen User
+# Create trizen user
 arch-chroot /mnt useradd -m -d /opt/trizen trizen
 echo "trizen ALL=(ALL) NOPASSWD: ALL" >> /mnt/etc/sudoers
 
 # Install trizen
 arch-chroot /mnt su trizen -c "git clone https://aur.archlinux.org/trizen-git.git /opt/trizen/trizen-git && cd /opt/trizen/trizen-git && makepkg -si --noconfirm"
 
-# Install Packages
+# Install packages
 case "$mode" in
   2|3)
     arch-chroot /mnt su trizen -c "trizen --noconfirm -S \
@@ -302,7 +303,7 @@ case "$mode" in
     ;;
 esac
 
-# Cleanup trizen User
+# Cleanup trizen user
 arch-chroot /mnt userdel trizen
 rm -rf /mnt/opt/trizen
 sed -i '/trizen/d' /mnt/etc/sudoers
@@ -312,7 +313,7 @@ sed -i '/trizen/d' /mnt/etc/sudoers
 #
 # Configure users
 
-# Create User
+# Create user
 arch-chroot /mnt useradd -mU -G docker,wheel -s /usr/bin/zsh -p "$(openssl passwd -1 "$password1")" "$user"
 arch-chroot /mnt chsh -s /usr/bin/zsh "$user"
 
@@ -339,7 +340,7 @@ sed -i '/^# %wheel ALL=(ALL) ALL$/s/^# //g' /mnt/etc/sudoers
 sed -i "s/^HOOKS.*/HOOKS=(base udev autodetect keyboard keymap consolefont modconf block encrypt lvm2 filesystems fsck)/" /mnt/etc/mkinitcpio.conf
 arch-chroot /mnt mkinitcpio -p linux
 
-# Install Grub
+# Install grub
 arch-chroot /mnt grub-install "$device"
 arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
 device_esc=$(sed 's/\//\\\//g' <<< "$device")
@@ -350,7 +351,7 @@ sed -i "s/.*vmlinuz-linux.*/linux \\/vmlinuz-linux root=\\/dev\\/mapper\\/volgro
 #
 # Complete setup
 
-# Release Resources
+# Release resources
 umount -R /mnt
 swapoff -a
 
