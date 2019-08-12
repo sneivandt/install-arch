@@ -225,7 +225,7 @@ Depends = dash
 EOF
 
 # xmonad --recompile
-cat >>/mnt/etc/pacman.d/hooks/xmonad.hook <<'EOF'
+cat >>/mnt/etc/pacman.d/hooks/xmonad.hook <<EOF
 [Trigger]
 Type = Package
 Operation = Install
@@ -234,7 +234,7 @@ Target = xmonad
 [Action]
 Description = Recompile xmonad
 When = PostTransaction
-Exec = /usr/bin/xmonad --recompile
+Exec = /usr/bin/sudo -u $user /usr/bin/xmonad --recompile
 Depends = xmonad
 EOF
 
