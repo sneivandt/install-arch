@@ -124,6 +124,7 @@ packages=(
   git \
   grub \
   linux-headers \
+  jq \
   mlocate \
   neovim \
   ntp \
