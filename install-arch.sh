@@ -195,13 +195,6 @@ esac
 # Pacstrap
 pacstrap /mnt "${packages[@]}"
 
-# Configure pacman
-cat >>/mnt/etc/pacman.conf <<'EOF'
-[options]
-ILoveCandy
-Color
-EOF
-
 # }}}
 # General ----------------------------------------------------------------- {{{
 #
@@ -212,6 +205,62 @@ genfstab -U /mnt >> /mnt/etc/fstab
 
 # sh -> dash
 arch-chroot /mnt ln -sfT dash /usr/bin/sh
+
+# Set hostname
+echo "$hostname" > /mnt/etc/hostname
+cat >>/mnt/etc/hosts <<'EOF'
+127.0.0.1 localhost.localdomain localhost
+::1 localhost.localdomain localhost
+127.0.0.1 "$hostname".localdomain "$hostname"
+EOF
+
+# Set locale
+echo "en_US.UTF-8 UTF-8" > /mnt/etc/locale.gen
+arch-chroot /mnt locale-gen
+
+# Google DNS
+cat >>/mnt/etc/resolv.conf <<'EOF'
+nameserver 8.8.8.8
+nameserver 8.8.4.4
+EOF
+chattr +i /mnt/etc/resolv.conf
+
+# Volume
+arch-chroot /mnt mixer -q sset Master 100%
+arch-chroot /mnt alsactl store
+
+# Set time zone
+arch-chroot /mnt ln -sf /usr/share/zoneinfo/US/Pacific /etc/localtime
+
+# Enable cronie
+arch-chroot /mnt systemctl enable cronie.service
+
+# Enable dhcpcd
+arch-chroot /mnt systemctl enable dhcpcd.service
+
+# Enable docker
+arch-chroot /mnt systemctl enable docker.service
+
+# Enable ntpd
+arch-chroot /mnt systemctl enable ntpd.service
+
+# Enable paccache.timer
+arch-chroot /mnt systemctl enable paccache.timer
+
+# Enable vboxservice
+[ "$mode" -eq 3 ] && arch-chroot /mnt systemctl enable vboxservice.service
+
+# }}}
+# Pacman ------------------------------------------------------------------ {{{
+
+# Configure pacman
+cat >>/mnt/etc/pacman.conf <<'EOF'
+[options]
+ILoveCandy
+Color
+EOF
+
+# sh -> dash
 cat >>/mnt/etc/pacman.d/hooks/dash.hook <<'EOF'
 [Trigger]
 Type = Package
@@ -223,6 +272,21 @@ Description = Re-pointing /bin/sh symlink to dash...
 When = PostTransaction
 Exec = /usr/bin/ln -sfT dash /usr/bin/sh
 Depends = dash
+EOF
+
+# clean package cache
+cat >>/mnt/etc/pacman.d/hooks/paccache.hook <<EOF
+[Trigger]
+Operation = Remove
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = *
+[Action]
+Description = Clean package cache
+When = PostTransaction
+Exec = /usr/bin/paccache -rk5
+Depends = pacman-contrib
 EOF
 
 # xmonad --recompile
@@ -238,47 +302,6 @@ When = PostTransaction
 Exec = /usr/bin/sudo -u $user /usr/bin/xmonad --recompile
 Depends = xmonad
 EOF
-
-# Set hostname
-echo "$hostname" > /mnt/etc/hostname
-cat >>/mnt/etc/hosts <<'EOF'
-127.0.0.1 localhost.localdomain localhost
-::1 localhost.localdomain localhost
-127.0.0.1 "$hostname".localdomain "$hostname"
-EOF
-
-# Google DNS
-cat >>/mnt/etc/resolv.conf <<'EOF'
-nameserver 8.8.8.8
-nameserver 8.8.4.4
-EOF
-chattr +i /mnt/etc/resolv.conf
-
-# Volume
-arch-chroot /mnt mixer -q sset Master 100%
-arch-chroot /mnt alsactl store
-
-# Set locale
-echo "en_US.UTF-8 UTF-8" > /mnt/etc/locale.gen
-arch-chroot /mnt locale-gen
-
-# Set time zone
-arch-chroot /mnt ln -sf /usr/share/zoneinfo/US/Pacific /etc/localtime
-
-# Enable cronie
-arch-chroot /mnt systemctl enable cronie
-
-# Enable dhcpcd
-arch-chroot /mnt systemctl enable dhcpcd
-
-# Enable docker
-arch-chroot /mnt systemctl enable docker
-
-# Enable ntpd
-arch-chroot /mnt systemctl enable ntpd
-
-# Enable vboxservice
-[ "$mode" -eq 3 ] && arch-chroot /mnt systemctl enable vboxservice
 
 # }}}
 # AUR --------------------------------------------------------------------- {{{
