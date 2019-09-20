@@ -346,6 +346,7 @@ sed -i '/^# %wheel ALL=(ALL) NOPASSWD: ALL$/s/^# //g' /mnt/etc/sudoers
 
 # Lock root
 arch-chroot /mnt passwd -l root
+arch-chroot /mnt usermod -s /sbin/nologin root
 
 # Install dotfiles
 arch-chroot /mnt su "$user" -c "git clone https://github.com/sneivandt/dotfiles.git /home/$user/src/dotfiles"
