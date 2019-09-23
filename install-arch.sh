@@ -226,14 +226,11 @@ EOF
 chattr +i /mnt/etc/resolv.conf
 
 # Volume
-arch-chroot /mnt mixer -q sset Master 100%
-arch-chroot /mnt alsactl store
+#arch-chroot /mnt mixer -q sset Master 100%
+#arch-chroot /mnt alsactl store
 
 # Set time zone
 arch-chroot /mnt ln -sf /usr/share/zoneinfo/US/Pacific /etc/localtime
-
-# Enable cronie
-arch-chroot /mnt systemctl enable cronie.service
 
 # Enable dhcpcd
 arch-chroot /mnt systemctl enable dhcpcd.service
@@ -259,6 +256,8 @@ cat >>/mnt/etc/pacman.conf <<'EOF'
 ILoveCandy
 Color
 EOF
+
+mkdir -p /mnt/etc/pacman.d/hooks
 
 # sh -> dash
 cat >>/mnt/etc/pacman.d/hooks/dash.hook <<'EOF'
