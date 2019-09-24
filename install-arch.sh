@@ -226,8 +226,8 @@ EOF
 chattr +i /mnt/etc/resolv.conf
 
 # Volume
-#arch-chroot /mnt mixer -q sset Master 100%
-#arch-chroot /mnt alsactl store
+arch-chroot /mnt amixer -q sset Master 100%
+arch-chroot /mnt alsactl store
 
 # Set time zone
 arch-chroot /mnt ln -sf /usr/share/zoneinfo/US/Pacific /etc/localtime
