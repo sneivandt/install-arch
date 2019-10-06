@@ -132,7 +132,6 @@ packages=(
   pacman-contrib \
   python-pip \
   python-requests \
-  ranger \
   shellcheck \
   tmux \
   vim \
