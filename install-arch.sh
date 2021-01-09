@@ -3,12 +3,15 @@ set -o errexit
 set -u nounset
 set -o pipefail
 
+# Error Trap
+trap 'echo "$0: Error on line "$LINENO": $BASH_COMMAND"' ERR
+
+# Install host packages
+pacman -Sy --noconfirm dialog
+
 # Input ------------------------------------------------------------------- {{{
 #
 # User input
-
-# Error Trap
-trap 'echo "$0: Error on line "$LINENO": $BASH_COMMAND"' ERR
 
 # Install mode
 mode=$(dialog --stdout --clear --menu "Select install mode" 0 0 0 "1" "Minimal" "2" "Worktation" "3" "VirtualBox") || exit
@@ -31,6 +34,10 @@ if [ "$password1" != "$password2" ]; then echo "Passwords did not match"; exit; 
 devicelist=$(lsblk -dplnx size -o name,size | grep -Ev "boot|rpmb|loop" | tac)
 # shellcheck disable=SC2086
 device=$(dialog --stdout --clear --menu "Select installation disk" 0 0 0 ${devicelist}) || exit 1
+dpfx=""
+case "$device" in
+  "/dev/nvme"*) dpfx="p"
+esac
 
 # Encryption password
 password_luks1=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password" 0 40) || exit 1
@@ -57,15 +64,13 @@ exec 2> >(tee "stderr.log")
 # Setup the disk
 
 # Partitioning
-fdisk "$device" <<'EOF'
+fdisk "$device" <<'EOF' # p1 make type 1 (UEFI)
+g
 n
-p
 1
 
 +512M
-a
 n
-p
 2
 
 
@@ -76,10 +81,10 @@ w
 EOF
 
 # Encrypt root drive
-echo -n "$password_luks1" | cryptsetup luksFormat --type luks2 "$device"2 -
+echo -n "$password_luks1" | cryptsetup luksFormat --type luks2 "$device$dpfx"2 -
 
 # Open root drive
-echo -n "$password_luks1" | cryptsetup open "$device"2 cryptlvm -
+echo -n "$password_luks1" | cryptsetup open "$device$dpfx"2 cryptlvm -
 
 # Create physical volume
 pvcreate /dev/mapper/cryptlvm
@@ -94,13 +99,13 @@ lvcreate -l 100%FREE volgroup0 -n root
 # Format
 mkswap /dev/mapper/volgroup0-swap
 mkfs.ext4 /dev/mapper/volgroup0-root
-mkfs.ext2 "$device"1
+mkfs.vfat -F32 -n EFI "$device$dpfx"1
 
 # Mount
 mount /dev/mapper/volgroup0-root /mnt
 swapon /dev/mapper/volgroup0-swap
 mkdir /mnt/boot
-mount "$device"1 /mnt/boot
+mount "$device$dpfx"1 /mnt/boot
 
 # }}}
 # Pacstrap ---------------------------------------------------------------- {{{
@@ -108,10 +113,7 @@ mount "$device"1 /mnt/boot
 # Install packages
 
 # Update mirrors
-curl -s 'https://www.archlinux.org/mirrorlist/?country=US&protocol=https&ip_version=4' | sed 's/^#Server/Server/' > /etc/pacman.d/mirrorlist
-
-# Update keys
-pacman-key --refresh-keys
+curl -sL 'https://www.archlinux.org/mirrorlist/?country=US&protocol=https&ip_version=4' | sed 's/^#Server/Server/' > /etc/pacman.d/mirrorlist
 
 # Base packages
 packages=(
@@ -119,12 +121,17 @@ packages=(
   base-devel \
   ctags \
   curl \
+  dhcpcd \
   dash \
   docker \
+  efibootmgr \
   git \
   grub \
+  linux \
+  linux-firmware \
   linux-headers \
   jq \
+  lvm2 \
   mlocate \
   neovim \
   ntp \
@@ -225,8 +232,12 @@ EOF
 chattr +i /mnt/etc/resolv.conf
 
 # Volume
-arch-chroot /mnt amixer -q sset Master 100%
-arch-chroot /mnt alsactl store
+case "$mode" in
+  2|3)
+    arch-chroot /mnt amixer -q sset Master 100%
+    arch-chroot /mnt alsactl store
+    ;;
+esac
 
 # Set time zone
 arch-chroot /mnt ln -sf /usr/share/zoneinfo/US/Pacific /etc/localtime
@@ -321,7 +332,7 @@ case "$mode" in
       fzf \
       otf-font-awesome \
       vertex-themes \
-      visual-studio-code-insiders"
+      visual-studio-code-insiders-bin"
     ;;
 esac
 
@@ -336,8 +347,8 @@ sed -i '/trizen/d' /mnt/etc/sudoers
 # Configure users
 
 # Create user
-arch-chroot /mnt useradd -mU -G docker,wheel -s /usr/bin/zsh -p "$(openssl passwd -1 "$password1")" "$user"
-arch-chroot /mnt chsh -s /usr/bin/zsh "$user"
+arch-chroot /mnt useradd -mU -G docker,wheel -s /bin/zsh -p "$(openssl passwd -1 "$password1")" "$user"
+arch-chroot /mnt chsh -s /bin/zsh "$user"
 
 # Allow sudo without password
 sed -i '/^# %wheel ALL=(ALL) NOPASSWD: ALL$/s/^# //g' /mnt/etc/sudoers
@@ -371,10 +382,10 @@ sed -i "s/^HOOKS.*/HOOKS=(base udev autodetect keyboard keymap consolefont modco
 arch-chroot /mnt mkinitcpio -p linux
 
 # Install grub
-arch-chroot /mnt grub-install "$device"
+arch-chroot /mnt grub-install "$device" --efi-directory=/boot
 arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
 device_esc=$(sed 's/\//\\\//g' <<< "$device")
-sed -i "s/.*vmlinuz-linux.*/linux \\/vmlinuz-linux root=\\/dev\\/mapper\\/volgroup0-root rw cryptdevice=${device_esc}2:volgroup0 quiet/" /mnt/boot/grub/grub.cfg
+sed -i "s/.*vmlinuz-linux.*/linux \\/vmlinuz-linux root=\\/dev\\/mapper\\/volgroup0-root rw cryptdevice=${device_esc}${dpfx}2:volgroup0 quiet/" /mnt/boot/grub/grub.cfg
 
 # }}}
 # Cleanup ----------------------------------------------------------------- {{{
