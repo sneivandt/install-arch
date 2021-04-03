@@ -3,12 +3,15 @@ set -o errexit
 set -u nounset
 set -o pipefail
 
+# Preamble ---------------------------------------------------------------- {{{
+
 # Error Trap
 trap 'echo "$0: Error on line "$LINENO": $BASH_COMMAND"' ERR
 
 # Install host packages
 pacman -Sy --noconfirm dialog
 
+# }}}
 # Input ------------------------------------------------------------------- {{{
 #
 # User input
@@ -248,8 +251,8 @@ arch-chroot /mnt systemctl enable dhcpcd.service
 # Enable docker
 arch-chroot /mnt systemctl enable docker.service
 
-# Enable ntpd
-arch-chroot /mnt systemctl enable ntpd.service
+# Enable time sync
+arch-chroot /mnt systemctl enable systemd-timesyncd.service
 
 # Enable paccache.timer
 arch-chroot /mnt systemctl enable paccache.timer
@@ -308,7 +311,7 @@ Target = xmonad
 [Action]
 Description = Recompile xmonad
 When = PostTransaction
-Exec = /usr/bin/sudo -u $user /usr/bin/xmonad --recompile
+Exec = /usr/bin/sudo XMONAD_CONFIG_DIR=/home/$user/.config/xmonad -u $user /usr/bin/xmonad --recompile
 Depends = xmonad
 EOF
 
