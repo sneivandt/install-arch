@@ -166,7 +166,7 @@ packages_gui=(
   redshift \
   slock \
   ttf-dejavu \
-  ttf-font-awesome \
+  ttf-font-awesome-5 \
   xautolock \
   xmobar \
   xmonad \
