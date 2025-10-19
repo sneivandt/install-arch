@@ -1,23 +1,35 @@
 #!/usr/bin/env bash
+# Arch Linux semi-interactive installer.
+#
+# Run from Arch live ISO as root. Collects minimal input (mode, disk, hostname,
+# user, passwords) then automates: partitioning, LUKS2 encryption + LVM, base
+# package install, optional GUI/workstation stack, AUR helper/temp user,
+# dotfiles, and bootloader configuration.
+#
+# WARNING: Destroys selected disk contents completely.
+# Modes:
+#   1 Minimal (CLI only)
+#   2 Workstation (X11 + WM + optional NVIDIA)
+#   3 VirtualBox Workstation (adds guest utils)
+# Logging starts only after password collection.
 set -o errexit
 set -u nounset
 set -o pipefail
 
 # Preamble ---------------------------------------------------------------- {{{
 
-# Error Trap
+# Trap errors with line number + failing command.
 trap 'echo "$0: Error on line "$LINENO": $BASH_COMMAND"' ERR
 
-# Install host packages
+# Ensure dialog is present for interactive prompts.
 pacman -Sy --noconfirm dialog
 
 # }}}
 # Input ------------------------------------------------------------------- {{{
-#
-# User input
+# Collect required interactive parameters before mutating system state.
 
 # Install mode
-mode=$(dialog --stdout --clear --menu "Select install mode" 0 0 0 "1" "Minimal" "2" "Worktation" "3" "VirtualBox") || exit
+mode=$(dialog --stdout --clear --menu "Select install mode" 0 0 0 "1" "Minimal" "2" "Workstation" "3" "VirtualBox") || exit
 
 # Hostname
 hostname=$(dialog --stdout --clear --inputbox "Enter hostname" 0 40) || exit 1
@@ -227,14 +239,14 @@ EOF
 echo "en_US.UTF-8 UTF-8" > /mnt/etc/locale.gen
 arch-chroot /mnt locale-gen
 
-# Google DNS
+# Google DNS (static resolv.conf; protected by chattr to prevent overwrite)
 cat >>/mnt/etc/resolv.conf <<'EOF'
 nameserver 8.8.8.8
 nameserver 8.8.4.4
 EOF
 chattr +i /mnt/etc/resolv.conf
 
-# Volume
+# Initialize audio volume for GUI modes (store ALSA state)
 case "$mode" in
   2|3)
     arch-chroot /mnt amixer -q sset Master 100%
@@ -242,28 +254,28 @@ case "$mode" in
     ;;
 esac
 
-# Set time zone
+# Set system time zone (adjust if deploying outside US/Pacific)
 arch-chroot /mnt ln -sf /usr/share/zoneinfo/US/Pacific /etc/localtime
 
-# Enable dhcpcd
+# Enable DHCP client service
 arch-chroot /mnt systemctl enable dhcpcd.service
 
-# Enable docker
+# Enable Docker daemon
 arch-chroot /mnt systemctl enable docker.service
 
-# Enable time sync
+# Enable systemd time synchronization service
 arch-chroot /mnt systemctl enable systemd-timesyncd.service
 
-# Enable paccache.timer
+# Enable pacman cache cleanup timer
 arch-chroot /mnt systemctl enable paccache.timer
 
-# Enable vboxservice
+# Enable VirtualBox guest services (mode 3 only)
 [ "$mode" -eq 3 ] && arch-chroot /mnt systemctl enable vboxservice.service
 
 # }}}
 # Pacman ------------------------------------------------------------------ {{{
 
-# Configure pacman
+# Basic pacman cosmetic options (color + candy progress)
 cat >>/mnt/etc/pacman.conf <<'EOF'
 [options]
 ILoveCandy
@@ -272,7 +284,7 @@ EOF
 
 mkdir -p /mnt/etc/pacman.d/hooks
 
-# sh -> dash
+# Hook to keep /bin/sh pointing to dash after bash transactions
 cat >>/mnt/etc/pacman.d/hooks/dash.hook <<'EOF'
 [Trigger]
 Type = Package
@@ -286,7 +298,7 @@ Exec = /usr/bin/ln -sfT dash /usr/bin/sh
 Depends = dash
 EOF
 
-# clean package cache
+# Hook to clean old package cache entries (retain 5)
 cat >>/mnt/etc/pacman.d/hooks/paccache.hook <<EOF
 [Trigger]
 Operation = Remove
@@ -301,7 +313,7 @@ Exec = /usr/bin/paccache -rk5
 Depends = pacman-contrib
 EOF
 
-# xmonad --recompile
+# Hook to auto recompile xmonad after install/upgrade
 cat >>/mnt/etc/pacman.d/hooks/xmonad.hook <<EOF
 [Trigger]
 Type = Package
@@ -318,16 +330,16 @@ EOF
 # }}}
 # AUR --------------------------------------------------------------------- {{{
 #
-# Install AUR packages
+# Install selected AUR packages using temporary trizen user
 
-# Create trizen user
+# Create temporary AUR build user
 arch-chroot /mnt useradd -m -d /opt/trizen trizen
 echo "trizen ALL=(ALL) NOPASSWD: ALL" >> /mnt/etc/sudoers
 
-# Install trizen
+# Clone and build trizen-git helper
 arch-chroot /mnt su trizen -c "git clone https://aur.archlinux.org/trizen-git.git /opt/trizen/trizen-git && cd /opt/trizen/trizen-git && makepkg -si --noconfirm"
 
-# Install packages
+# Install AUR packages for workstation modes
 case "$mode" in
   2|3)
     arch-chroot /mnt su trizen -c "trizen --noconfirm -S \
@@ -339,7 +351,7 @@ case "$mode" in
     ;;
 esac
 
-# Cleanup trizen user
+# Remove temporary build user and its sudo privileges
 arch-chroot /mnt userdel trizen
 rm -rf /mnt/opt/trizen
 sed -i '/trizen/d' /mnt/etc/sudoers
@@ -347,20 +359,20 @@ sed -i '/trizen/d' /mnt/etc/sudoers
 # }}}
 # Users  ------------------------------------------------------------------ {{{
 #
-# Configure users
+# Create main user, apply dotfiles, lock root, adjust sudo policy
 
-# Create user
+# Create user (groups: docker,wheel) with hashed password and zsh shell
 arch-chroot /mnt useradd -mU -G docker,wheel -s /bin/zsh -p "$(openssl passwd -1 "$password1")" "$user"
 arch-chroot /mnt chsh -s /bin/zsh "$user"
 
-# Allow sudo without password
+# Temporarily allow passwordless sudo for bootstrapping
 sed -i '/^# %wheel ALL=(ALL) NOPASSWD: ALL$/s/^# //g' /mnt/etc/sudoers
 
-# Lock root
+# Lock and disable interactive root login
 arch-chroot /mnt passwd -l root
 arch-chroot /mnt usermod -s /sbin/nologin root
 
-# Install dotfiles
+# Clone dotfiles repo and run installer (mode controls flags)
 arch-chroot /mnt su "$user" -c "git clone https://github.com/sneivandt/dotfiles.git /home/$user/src/dotfiles"
 case "$mode" in
   1)
@@ -371,20 +383,20 @@ case "$mode" in
     ;;
 esac
 
-# Require password for sudo
+# Reinstate sudo password requirement
 sed -i '/^%wheel ALL=(ALL) NOPASSWD: ALL$/s/^/# /g' /mnt/etc/sudoers
 sed -i '/^# %wheel ALL=(ALL) ALL$/s/^# //g' /mnt/etc/sudoers
 
 # }}}
 # Init -------------------------------------------------------------------- {{{
 #
-# Configure system startup
+# Initramfs generation + GRUB installation/config for encrypted root
 
-# Create init ramdisk
+# Ensure required hooks present then build initramfs
 sed -i "s/^HOOKS.*/HOOKS=(base udev autodetect keyboard keymap consolefont modconf block encrypt lvm2 filesystems fsck)/" /mnt/etc/mkinitcpio.conf
 arch-chroot /mnt mkinitcpio -p linux
 
-# Install grub
+# Install GRUB to EFI and patch kernel line with cryptdevice parameter
 arch-chroot /mnt grub-install "$device" --efi-directory=/boot
 arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
 device_esc=$(sed 's/\//\\\//g' <<< "$device")
@@ -393,7 +405,7 @@ sed -i "s/.*vmlinuz-linux.*/linux \\/vmlinuz-linux root=\\/dev\\/mapper\\/volgro
 # }}}
 # Cleanup ----------------------------------------------------------------- {{{
 #
-# Complete setup
+# Final unmounts and swap deactivation
 
 # Release resources
 umount -R /mnt
