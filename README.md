@@ -18,8 +18,8 @@ Interactive prompts (via `dialog`) cover: mode, hostname, user/password, disk en
 
 | Mode | Purpose | Extras |
 |------|---------|--------|
-| Minimal (1) | Fast CLI workstation base | Core tooling only |
-| Workstation (2) | Lightweight X11 + tiling WM | Desktop + optional NVIDIA + curated AUR |
+| Minimal (1) | Fast CLI workstation base | Core tooling + modern CLI utilities |
+| Workstation (2) | Lightweight X11 + tiling WM | Desktop + optional NVIDIA + paru AUR helper |
 | VirtualBox (3) | Workstation for VM guests | Adds guest integrations |
 
 ## Flow 🗺️
@@ -32,7 +32,7 @@ Interactive prompts (via `dialog`) cover: mode, hostname, user/password, disk en
 6. Install base + mode additions
 7. System config: fstab, hostname, locale, timezone, DNS, services
 8. Pacman candy + hooks (dash, cache clean, xmonad auto‑recompile)
-9. Temporary AUR helper to pull notable extras (desktop modes)
+9. Install paru AUR helper (for user package management)
 10. Create user (zsh, wheel, docker); fetch dotfiles & bootstrap
 11. Initramfs + GRUB (encrypted root params)
 12. Cleanup (unmount, swapoff)
@@ -40,13 +40,40 @@ Interactive prompts (via `dialog`) cover: mode, hostname, user/password, disk en
 ## Noteworthy Packages 📦
 
 Only highlighting the distinctive ones — the usual Arch base is assumed:
+
+**Core System:**
 * Encryption & LVM stack: `cryptsetup`, `lvm2`
 * Boot: `efibootmgr`, `grub`
 * Shell: `zsh` (set as default) & `dash` (symlinked to `/bin/sh` via hook)
 * Dev / tooling: `docker`, `neovim`, `tmux`, `shellcheck`
-* Desktop modes: `xmonad`, `xmonad-contrib`, `xmobar` (tiling WM & status bar), fonts & minimal utilities
-* AUR (desktop modes): `visual-studio-code-insiders-bin`, `chromium-widevine`, `fzf`
-* VirtualBox mode: `virtualbox-guest-utils`
+
+**Modern CLI Utilities (Minimal mode):**
+* `bat` - cat with syntax highlighting
+* `btop` - modern resource monitor
+* `eza` - modern ls replacement
+* `fd` - modern find replacement
+* `ripgrep` - fast grep alternative
+* `fzf` - fuzzy finder
+* `git-delta` - better git diffs
+* `lazygit` - terminal git UI
+* `zoxide` - smarter cd
+* `duf` - modern df
+
+**Desktop (Workstation modes):**
+* Window Manager: `xmonad`, `xmonad-contrib`
+* Terminal: `alacritty`, `rxvt-unicode`
+* Browser: `chromium`
+* Launcher: `rofi` 
+* Compositor: `picom`
+* Screenshot: `flameshot`
+* Fonts: `adobe-source-code-pro-fonts`, `noto-fonts-cjk`, `noto-fonts-emoji`
+* Theme: `papirus-icon-theme`
+
+**AUR Helper:**
+* `paru` - Installed for user package management (pinned to specific commit for security)
+
+**VirtualBox mode:**
+* `virtualbox-guest-utils`
 
 ## Disk Layout 💽
 
@@ -70,7 +97,7 @@ Consider editing before running:
 * Timezone (`US/Pacific` hardcoded)
 * Mirror country (currently US)
 * Swap size (1G)
-* AUR list & desktop apps
+* Package selections in `packages` and `packages_gui` arrays
 * DNS (Google resolvers pinned + immutable)
 
 ## Security 🔐
@@ -90,7 +117,7 @@ Consider editing before running:
 
 * Small terminal → dialog truncation: enlarge window
 * Time or key errors → ensure NTP active (`timedatectl set-ntp true`)
-* AUR build hiccups → retry inside installed system
+* Package installation issues → check internet connection and mirrors
 * No NVIDIA prompt → device not detected (falls back to generic driver)
 
 ## Development 🧪
