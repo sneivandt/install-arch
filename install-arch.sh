@@ -43,13 +43,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Ensure dialog is present for interactive prompts (skip in test mode).
-if [ "$TEST_MODE" = false ]; then
+if [ "$TEST_MODE" = "false" ]; then
   pacman -Sy --noconfirm dialog
 fi
 
 # Helper functions for dry-run mode
 run_cmd() {
-  if [ "$DRY_RUN" = true ]; then
+  if [ "$DRY_RUN" = "true" ]; then
     # Use %q to show a shell-escaped representation of each argument,
     # preserving spaces and special characters.
     printf '[DRY-RUN] Would execute:'
@@ -65,14 +65,14 @@ run_cmd() {
 # Collect required interactive parameters before mutating system state.
 
 # Install mode
-if [ "$TEST_MODE" = true ]; then
+if [ "$TEST_MODE" = "true" ]; then
   mode="${TEST_MODE_MODE:-1}"
 else
   mode=$(dialog --stdout --clear --menu "Select install mode" 0 0 0 "1" "Minimal" "2" "Workstation" "3" "VirtualBox") || exit 1
 fi
 
 # Hostname
-if [ "$TEST_MODE" = true ]; then
+if [ "$TEST_MODE" = "true" ]; then
   hostname="${TEST_MODE_HOSTNAME:-testhost}"
 else
   hostname=$(dialog --stdout --clear --inputbox "Enter hostname" 0 40) || exit 1
@@ -80,7 +80,7 @@ fi
 [ -z "$hostname" ] && echo "hostname cannot be empty" && exit 1
 
 # Username
-if [ "$TEST_MODE" = true ]; then
+if [ "$TEST_MODE" = "true" ]; then
   user="${TEST_MODE_USER:-testuser}"
 else
   user=$(dialog --stdout --clear --inputbox "Enter username" 0 40) || exit 1
@@ -88,7 +88,7 @@ fi
 [ -z "$user" ] && echo "username cannot be empty" && exit 1
 
 # User password
-if [ "$TEST_MODE" = true ]; then
+if [ "$TEST_MODE" = "true" ]; then
   password1="${TEST_MODE_PASSWORD:-testpass123}"
   password2="$password1"
 else
@@ -99,10 +99,10 @@ fi
 if [ "$password1" != "$password2" ]; then echo "Passwords did not match"; exit 1; fi
 
 # Installation disk
-if [ "$TEST_MODE" = true ]; then
+if [ "$TEST_MODE" = "true" ]; then
   device="${TEST_MODE_DEVICE:-/dev/loop0}"
   # In test mode without dry-run, ensure the device exists and is a block device.
-  if [ "$DRY_RUN" = false ] && { [ -z "$device" ] || [ ! -b "$device" ]; }; then
+  if [ "$DRY_RUN" = "false" ] && { [ -z "$device" ] || [ ! -b "$device" ]; }; then
     echo "In test mode, device \"$device\" does not exist or is not a block device."
     echo "Set TEST_MODE_DEVICE to a valid block device (for example, a loop device created with losetup)."
     echo "Or use --dry-run mode to skip actual disk operations."
@@ -115,11 +115,11 @@ else
 fi
 dpfx=""
 case "$device" in
-  "/dev/nvme"*) dpfx="p"
+  "/dev/nvme"*) dpfx="p" ;;
 esac
 
 # Encryption password
-if [ "$TEST_MODE" = true ]; then
+if [ "$TEST_MODE" = "true" ]; then
   password_luks1="${TEST_MODE_LUKS_PASSWORD:-lukspass123}"
   password_luks2="$password_luks1"
 else
@@ -132,13 +132,20 @@ if [ "$password_luks1" != "$password_luks2" ]; then echo "Passwords did not matc
 # Video driver
 video_driver=""
 if [ "$mode" -eq 2 ]; then
-  if [ "$TEST_MODE" = true ]; then
+  if [ "$TEST_MODE" = "true" ]; then
     video_driver="${TEST_MODE_VIDEO_DRIVER:-}"
   elif lspci | grep -e VGA -e 3D | grep -q NVIDIA; then
     video_drivers=(0 nvidia 1 nvidia-340xx 2 nvidia-390xx 3 xf86-video-nouveau)
     # shellcheck disable=SC2068
     driver_index=$(dialog --stdout --clear --menu "Select video driver" 0 0 0 ${video_drivers[@]}) || exit 1
-    video_driver="${video_drivers[$((driver_index * 2 + 1))]}"
+    # Dialog returns the tag (0, 1, 2, 3), we need to get the value at index (tag * 2 + 1)
+    # But we need to convert tag to the actual driver name
+    case "$driver_index" in
+      0) video_driver="nvidia" ;;
+      1) video_driver="nvidia-340xx" ;;
+      2) video_driver="nvidia-390xx" ;;
+      3) video_driver="xf86-video-nouveau" ;;
+    esac
   fi
 fi
 
@@ -156,7 +163,7 @@ fi
 # Setup the disk
 
 # Partitioning
-if [ "$DRY_RUN" = true ]; then
+if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would partition $device with fdisk"
 else
   fdisk "$device" <<'EOF' # p1 make type 1 (UEFI)
@@ -177,14 +184,14 @@ EOF
 fi
 
 # Encrypt root drive
-if [ "$DRY_RUN" = true ]; then
+if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would encrypt ${device}${dpfx}2 with LUKS2"
 else
   echo -n "$password_luks1" | cryptsetup luksFormat --type luks2 "${device}${dpfx}2" -
 fi
 
 # Open root drive
-if [ "$DRY_RUN" = true ]; then
+if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would open LUKS device ${device}${dpfx}2 as cryptlvm"
 else
   echo -n "$password_luks1" | cryptsetup open "${device}${dpfx}2" cryptlvm -
@@ -217,7 +224,7 @@ run_cmd mount "${device}${dpfx}1" /mnt/boot
 # Install packages
 
 # Update mirrors
-if [ "$DRY_RUN" = true ]; then
+if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would update mirrorlist"
 else
   curl -sL 'https://www.archlinux.org/mirrorlist/?country=US&protocol=https&ip_version=4' | sed 's/^#Server/Server/' > /etc/pacman.d/mirrorlist
@@ -326,7 +333,7 @@ run_cmd pacstrap /mnt "${packages[@]}"
 # General system config
 
 # Generate filesystem table
-if [ "$DRY_RUN" = true ]; then
+if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would generate fstab"
 else
   genfstab -U /mnt >> /mnt/etc/fstab
@@ -336,7 +343,7 @@ fi
 run_cmd arch-chroot /mnt ln -sfT dash /usr/bin/sh
 
 # Set hostname
-if [ "$DRY_RUN" = true ]; then
+if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would set hostname to $hostname"
 else
   echo "$hostname" > /mnt/etc/hostname
@@ -348,7 +355,7 @@ EOF
 fi
 
 # Set locale
-if [ "$DRY_RUN" = true ]; then
+if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would set locale to en_US.UTF-8"
 else
   echo "en_US.UTF-8 UTF-8" > /mnt/etc/locale.gen
@@ -356,7 +363,7 @@ fi
 run_cmd arch-chroot /mnt locale-gen
 
 # Google DNS (static resolv.conf; protected by chattr to prevent overwrite)
-if [ "$DRY_RUN" = true ]; then
+if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would configure DNS resolvers"
 else
   cat >>/mnt/etc/resolv.conf <<'EOF'
@@ -398,7 +405,7 @@ fi
 # Pacman ------------------------------------------------------------------ {{{
 
 # Basic pacman cosmetic options (color + candy progress)
-if [ "$DRY_RUN" = true ]; then
+if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would configure pacman options"
 else
   sed -i '/^\[options\]/a Color\nILoveCandy' /mnt/etc/pacman.conf
@@ -407,7 +414,7 @@ fi
 run_cmd mkdir -p /mnt/etc/pacman.d/hooks
 
 # Hook to keep /bin/sh pointing to dash after bash transactions
-if [ "$DRY_RUN" = true ]; then
+if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would create pacman hooks"
 else
   cat >>/mnt/etc/pacman.d/hooks/dash.hook <<'EOF'
@@ -462,7 +469,7 @@ fi
 run_cmd arch-chroot /mnt useradd -m -d /opt/aurbuilder aurbuilder
 
 # Grant restricted sudo for package installation only
-if [ "$DRY_RUN" = true ]; then
+if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would create sudoers file for aurbuilder"
 else
   cat >> /mnt/etc/sudoers.d/aurbuilder <<'EOF'
@@ -490,7 +497,7 @@ run_cmd arch-chroot /mnt useradd -mU -G docker,wheel -s /bin/zsh -p "$(openssl p
 run_cmd arch-chroot /mnt chsh -s /bin/zsh "$user"
 
 # Temporarily allow passwordless sudo for bootstrapping
-if [ "$DRY_RUN" = true ]; then
+if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would modify sudoers for passwordless sudo"
 else
   sed -i '/^# %wheel ALL=(ALL) NOPASSWD: ALL$/s/^# //g' /mnt/etc/sudoers
@@ -512,7 +519,7 @@ case "$mode" in
 esac
 
 # Reinstate sudo password requirement
-if [ "$DRY_RUN" = true ]; then
+if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would restore sudo password requirement"
 else
   sed -i '/^%wheel ALL=(ALL) NOPASSWD: ALL$/s/^/# /g' /mnt/etc/sudoers
@@ -525,7 +532,7 @@ fi
 # Initramfs generation + GRUB installation/config for encrypted root
 
 # Ensure required hooks present then build initramfs
-if [ "$DRY_RUN" = true ]; then
+if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would configure mkinitcpio hooks"
 else
   sed -i "s/^HOOKS.*/HOOKS=(base udev autodetect keyboard keymap consolefont modconf block encrypt lvm2 filesystems fsck)/" /mnt/etc/mkinitcpio.conf
@@ -535,7 +542,7 @@ run_cmd arch-chroot /mnt mkinitcpio -p linux
 # Install GRUB to EFI and patch kernel line with cryptdevice parameter
 run_cmd arch-chroot /mnt grub-install "$device" --efi-directory=/boot
 run_cmd arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
-if [ "$DRY_RUN" = true ]; then
+if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would configure GRUB cryptdevice parameter"
 else
   device_esc=$(sed 's/\//\\\//g' <<< "$device")
