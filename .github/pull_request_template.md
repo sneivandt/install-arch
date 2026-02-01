@@ -19,9 +19,9 @@
 
 ## Changes Made
 <!-- List the specific changes made in this PR -->
-- 
-- 
-- 
+- <!-- Describe change 1 -->
+- <!-- Describe change 2 -->
+- <!-- Describe change 3 -->
 
 ## Testing
 <!-- Describe the tests you ran to verify your changes -->

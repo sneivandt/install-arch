@@ -150,8 +150,8 @@ This installation prioritizes security with multiple layers of protection:
 * **UEFI firmware** (Legacy BIOS not supported)
 
 > **Important**: Ensure your system supports UEFI boot mode. Most modern systems (2012+) support UEFI, but older hardware may not.
-> 
-> **Verify UEFI mode**: Before starting installation, confirm you're booted in UEFI mode by checking if the directory exists:
+>
+> **Verify UEFI mode**: Before starting installation, confirm you're booted in UEFI mode by checking if `/sys/firmware/efi` exists:
 > ```bash
 > ls /sys/firmware/efi && echo "UEFI mode confirmed" || echo "Not in UEFI mode"
 > ```
