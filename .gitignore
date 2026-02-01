@@ -9,7 +9,6 @@ stderr.log
 /tmp/
 
 # Editor and IDE files
-.vscode/
 .idea/
 *.swp
 *.swo
