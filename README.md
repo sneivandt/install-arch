@@ -31,7 +31,7 @@ curl -sL https://git.io/vpvGR | bash
 
 Interactive prompts (via `dialog`) cover: mode, hostname, user/password, disk encryption password, target disk, and (when relevant) NVIDIA driver choice. Output is logged to `stdout.log` and `stderr.log`.
 
-> **⚠️ Warning**: This script will **erase the entire target disk**. Only run on a system where data loss is acceptable or on a fresh installation target.
+> **⚠️ WARNING**: This script will **ERASE THE ENTIRE TARGET DISK**. Only run on a system where data loss is acceptable or on a fresh installation target.
 
 ## Modes
 
@@ -136,7 +136,10 @@ This installation prioritizes security with multiple layers of protection:
 * **User isolation** - regular user account with sudo access via wheel group
 * **Modern encryption** - LUKS2 with strong defaults
 
-> **Note**: The immutable DNS configuration uses Google's public DNS servers (8.8.8.8, 8.8.4.4). If you prefer different DNS servers, you'll need to modify this after installation by removing the immutable attribute: `chattr -i /etc/resolv.conf`
+> **Note**: The immutable DNS configuration uses Google's public DNS servers (8.8.8.8, 8.8.4.4). To change DNS servers after installation:
+> 1. Remove immutable attribute: `chattr -i /etc/resolv.conf`
+> 2. Edit the file with your preferred DNS: `echo "nameserver 1.1.1.1" > /etc/resolv.conf`
+> 3. Optionally restore immutability: `chattr +i /etc/resolv.conf`
 
 ## Requirements
 
@@ -147,6 +150,11 @@ This installation prioritizes security with multiple layers of protection:
 * **UEFI firmware** (Legacy BIOS not supported)
 
 > **Important**: Ensure your system supports UEFI boot mode. Most modern systems (2012+) support UEFI, but older hardware may not.
+> 
+> **Verify UEFI mode**: Before starting installation, confirm you're booted in UEFI mode by checking if the directory exists:
+> ```bash
+> ls /sys/firmware/efi && echo "UEFI mode confirmed" || echo "Not in UEFI mode"
+> ```
 
 ## Troubleshooting
 

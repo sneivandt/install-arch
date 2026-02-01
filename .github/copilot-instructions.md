@@ -253,7 +253,7 @@ Before committing changes, verify:
 
 **ShellCheck Warnings:**
 - SC2086: Quote variables to prevent word splitting
-- SC2046: Quote command substitution to prevent word splitting  
+- SC2046: Quote command substitution to prevent word splitting
 - SC2181: Check exit code directly: `if command; then` instead of `if [ $? -eq 0 ]; then`
 - SC2002: Useless cat: Use `< file` instead of `cat file |`
 
