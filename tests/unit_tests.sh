@@ -146,6 +146,7 @@ test_script_syntax() {
 # Test 11: Script is executable
 test_script_executable() {
   local script_path="$SCRIPT_DIR/../install-arch.sh"
+  test_start "Script is executable"
   if [ -f "$script_path" ] && [ -x "$script_path" ]; then
     test_pass "Script is executable"
   else
