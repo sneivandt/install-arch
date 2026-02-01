@@ -101,6 +101,12 @@ if [ "$password1" != "$password2" ]; then echo "Passwords did not match"; exit 1
 # Installation disk
 if [ "$TEST_MODE" = true ]; then
   device="${TEST_MODE_DEVICE:-/dev/loop0}"
+  # In test mode, ensure the selected/default device exists and is a block device.
+  if [ -z "$device" ] || [ ! -b "$device" ]; then
+    echo "In test mode, device \"$device\" does not exist or is not a block device."
+    echo "Set TEST_MODE_DEVICE to a valid block device (for example, a loop device created with losetup)."
+    exit 1
+  fi
 else
   devicelist=$(lsblk -dplnx size -o name,size | grep -Ev "boot|rpmb|loop" | tac)
   # shellcheck disable=SC2086
