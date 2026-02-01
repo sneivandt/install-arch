@@ -50,7 +50,11 @@ fi
 # Helper functions for dry-run mode
 run_cmd() {
   if [ "$DRY_RUN" = true ]; then
-    echo "[DRY-RUN] Would execute: $*"
+    # Use %q to show a shell-escaped representation of each argument,
+    # preserving spaces and special characters.
+    printf '[DRY-RUN] Would execute:'
+    printf ' %q' "$@"
+    printf '\n'
   else
     "$@"
   fi
