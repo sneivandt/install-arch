@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 # Integration test for install-arch.sh
-# This script simulates a real installation using a loop device
+# 
+# NOTE: This test currently validates the script can run in dry-run mode with
+# test environment variables. It creates a loop device but does not perform
+# actual disk operations. Full installation testing would require mocking
+# pacstrap and arch-chroot commands.
+#
+# Future enhancements could include:
+# - Actual partitioning on loop device
+# - Mock arch-chroot and pacstrap for complete simulation
+# - Verification of partition layout, LUKS, and LVM setup
 set -o nounset
 set -o pipefail
 

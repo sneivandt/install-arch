@@ -56,15 +56,6 @@ run_cmd() {
   fi
 }
 
-run_piped_cmd() {
-  local cmd_desc="$1"
-  if [ "$DRY_RUN" = true ]; then
-    echo "[DRY-RUN] Would execute: $cmd_desc"
-  else
-    return 0  # Let the actual command run
-  fi
-}
-
 # }}}
 # Input ------------------------------------------------------------------- {{{
 # Collect required interactive parameters before mutating system state.
@@ -129,12 +120,15 @@ if [ "$password_luks1" != "$password_luks2" ]; then echo "Passwords did not matc
 
 # Video driver
 video_driver=""
-if [ "$mode" -eq 2 ] && [ "$TEST_MODE" = false ] && lspci | grep -e VGA -e 3D | grep -q NVIDIA
-then
-  video_drivers=(0 nvidia 1 nvidia-340xx 2 nvidia-390xx 3 xf86-video-nouveau)
-  # shellcheck disable=SC2068
-  driver_index=$(dialog --stdout --clear --menu "Select video driver" 0 0 0 ${video_drivers[@]}) || exit 1
-  video_driver="${video_drivers[$((driver_index * 2 + 1))]}"
+if [ "$mode" -eq 2 ]; then
+  if [ "$TEST_MODE" = true ]; then
+    video_driver="${TEST_MODE_VIDEO_DRIVER:-}"
+  elif lspci | grep -e VGA -e 3D | grep -q NVIDIA; then
+    video_drivers=(0 nvidia 1 nvidia-340xx 2 nvidia-390xx 3 xf86-video-nouveau)
+    # shellcheck disable=SC2068
+    driver_index=$(dialog --stdout --clear --menu "Select video driver" 0 0 0 ${video_drivers[@]}) || exit 1
+    video_driver="${video_drivers[$((driver_index * 2 + 1))]}"
+  fi
 fi
 
 # Logging

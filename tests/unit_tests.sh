@@ -154,6 +154,9 @@ test_script_executable() {
 }
 
 # Test 12: Validate all packages in base package list
+# NOTE: This package list is duplicated from install-arch.sh for validation.
+# If packages are added/removed in the main script, update this list accordingly.
+# Future enhancement: Extract package list dynamically from install-arch.sh
 test_base_packages() {
   local base_packages=(
     "base" "base-devel" "bat" "btop" "ctags" "curl" "dash" "dhcpcd" 
@@ -176,6 +179,9 @@ test_base_packages() {
 }
 
 # Test 13: Validate GUI packages
+# NOTE: This package list is duplicated from install-arch.sh for validation.
+# If packages are added/removed in the main script, update this list accordingly.
+# Future enhancement: Extract package list dynamically from install-arch.sh
 test_gui_packages() {
   local gui_packages=(
     "adobe-source-code-pro-fonts" "alacritty" "alsa-utils" "chromium" 
