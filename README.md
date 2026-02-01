@@ -36,14 +36,19 @@ Interactive prompts (via `dialog`) cover: mode, hostname, user/password, disk en
 2. GPT partitioning: EFI (512M) + encrypted LUKS2 container
 3. LUKS2 → LVM (swap + root)
 4. Format & mount
-5. Fresh HTTPS mirrorlist
-6. Install base + mode additions
-7. System config: fstab, hostname, locale, timezone, DNS, services
-8. Pacman candy + hooks (dash, cache clean, xmonad auto‑recompile)
-9. Install paru AUR helper (for user package management)
-10. Create user (zsh, wheel, docker); fetch dotfiles & bootstrap
-11. Initramfs + GRUB (encrypted root params)
-12. Cleanup (unmount, swapoff)
+5. CPU detection (Intel/AMD) for microcode selection
+6. Fresh HTTPS mirrorlist
+7. Install base + mode additions + microcode
+8. System config: fstab, hostname, locale, timezone
+9. Configure systemd-resolved for DNS with DNSSEC
+10. Enable core services: NetworkManager, firewall (UFW), fail2ban, Docker, timesyncd, fstrim, reflector
+11. Configure firewall defaults and fail2ban rules
+12. Apply kernel hardening via sysctl parameters
+13. Pacman candy + hooks (dash, cache clean, xmonad auto‑recompile)
+14. Install paru AUR helper (for user package management)
+15. Create user (zsh, wheel, docker); fetch dotfiles & bootstrap
+16. Initramfs + GRUB (for both linux and linux-lts kernels)
+17. Cleanup (unmount, swapoff)
 
 ## Noteworthy Packages
 
@@ -52,8 +57,17 @@ Only highlighting the distinctive ones — the usual Arch base is assumed:
 **Core System:**
 * Encryption & LVM stack: `cryptsetup`, `lvm2`
 * Boot: `efibootmgr`, `grub`
+* Kernels: `linux` (latest) + `linux-lts` (stable fallback)
+* Microcode: Automatically installs `intel-ucode` or `amd-ucode` based on CPU detection
 * Shell: `zsh` (set as default) & `dash` (symlinked to `/bin/sh` via hook)
 * Dev / tooling: `docker`, `neovim`, `tmux`, `shellcheck`
+
+**Network & Security:**
+* Network: `networkmanager` (replaces dhcpcd for modern network management)
+* DNS: `systemd-resolved` (with DNSSEC and DNS-over-TLS support)
+* Firewall: `ufw` (enabled by default, deny incoming, allow outgoing)
+* SSH Protection: `fail2ban` (protects against brute-force attacks)
+* Mirror Management: `reflector` (automatic mirror list updates)
 
 **Modern CLI Utilities (Minimal mode):**
 * `bat` - cat with syntax highlighting
@@ -103,21 +117,50 @@ The dotfiles repository provides profile-based configuration for shell environme
 
 Consider editing before running:
 * Timezone (`US/Pacific` hardcoded)
-* Mirror country (currently US)
+* Mirror country (currently US - auto-updated weekly via reflector)
 * Swap size (1G)
 * Package selections in `packages` and `packages_gui` arrays
-* DNS (Google resolvers pinned + immutable)
+* DNS servers (Google DNS by default with DNSSEC via systemd-resolved)
+* Firewall rules (UFW configured to deny incoming, allow outgoing)
+* Kernel hardening parameters in `/etc/sysctl.d/99-security.conf`
 
 ## Security
 
 This installation prioritizes security with multiple layers of protection:
 
-* **Full disk encryption** (root + swap) using LUKS2
+**Encryption & Boot Security:**
+* **Full disk encryption** (root + swap) using LUKS2 with strong defaults
+* **CPU microcode updates** - Automatically installs Intel or AMD microcode for security patches
+* **Dual kernel setup** - Latest kernel (linux) + LTS fallback (linux-lts) for stability
+
+**Network Security:**
+* **Firewall enabled** - UFW configured (deny incoming, allow outgoing by default)
+* **Fail2ban protection** - Automatic banning of brute-force SSH attempts (5 failures in 10 minutes = 1 hour ban)
+* **Modern DNS** - systemd-resolved with DNSSEC validation and opportunistic DNS-over-TLS
+* **Network isolation** - NetworkManager replaces dhcpcd for better security features
+
+**System Hardening:**
+* **Kernel hardening** - sysctl parameters to protect against common attacks:
+  - Kernel pointer leak prevention (`kernel.kptr_restrict = 2`)
+  - Restricted dmesg access (`kernel.dmesg_restrict = 1`)
+  - SYN flood protection (`net.ipv4.tcp_syncookies = 1`)
+  - Anti-spoofing via source address verification
+  - ICMP redirect protection
+  - Disabled IP forwarding (unless needed for routing)
+  - Core dump restrictions to prevent information leaks
+  - Full ASLR enabled (`kernel.randomize_va_space = 2`)
+
+**Account Security:**
 * **Root account locked** (`nologin`) - preventing direct root login
-* **Sudo briefly passwordless** for bootstrap, then restored to require password
-* **Immutable `/etc/resolv.conf`** (Google DNS) — change if undesired
+* **Sudo with password** - passwordless only during bootstrap, then password required
 * **User isolation** - regular user account with sudo access via wheel group
-* **Modern encryption** - LUKS2 with strong defaults
+* **Docker group membership** - user can manage containers without sudo
+
+**Maintenance & Updates:**
+* **Automatic mirror updates** - reflector timer updates mirrors weekly
+* **SSD health** - fstrim timer runs weekly for SSD longevity
+* **Package cache cleanup** - paccache keeps last 5 versions automatically
+* **Time synchronization** - systemd-timesyncd for accurate system time
 
 ## Requirements
 
