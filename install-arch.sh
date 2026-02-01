@@ -522,6 +522,7 @@ fi
 if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would create security hardening sysctl configuration"
 else
+  mkdir -p /mnt/etc/sysctl.d
   cat >>/mnt/etc/sysctl.d/99-security.conf <<'EOF'
 # Kernel hardening settings for improved security
 
