@@ -4,7 +4,7 @@ Automated, opinionated provisioning of an [Arch Linux](https://archlinux.org) sy
 
 [![CI](https://github.com/sneivandt/install-arch/actions/workflows/ci.yml/badge.svg)](https://github.com/sneivandt/install-arch/actions/workflows/ci.yml)
 
-## Quick Start 🔧
+## Quick Start
 
 Boot the Arch Linux live ISO, bring up networking, then:
 
@@ -14,7 +14,7 @@ curl -sL https://git.io/vpvGR | bash
 
 Interactive prompts (via `dialog`) cover: mode, hostname, user/password, disk encryption password, target disk, and (when relevant) NVIDIA driver choice. Output is logged to `stdout.log` and `stderr.log`.
 
-## Modes 🧩
+## Modes
 
 | Mode | Purpose | Extras |
 |------|---------|--------|
@@ -22,7 +22,7 @@ Interactive prompts (via `dialog`) cover: mode, hostname, user/password, disk en
 | Workstation (2) | Lightweight X11 + tiling WM | Desktop + optional NVIDIA + paru AUR helper |
 | VirtualBox (3) | Workstation for VM guests | Adds guest integrations |
 
-## Flow 🗺️
+## Flow
 
 1. Collect input (dialog)
 2. GPT partitioning: EFI (512M) + encrypted LUKS2 container
@@ -37,7 +37,7 @@ Interactive prompts (via `dialog`) cover: mode, hostname, user/password, disk en
 11. Initramfs + GRUB (encrypted root params)
 12. Cleanup (unmount, swapoff)
 
-## Noteworthy Packages 📦
+## Noteworthy Packages
 
 Only highlighting the distinctive ones — the usual Arch base is assumed:
 
@@ -75,7 +75,7 @@ Only highlighting the distinctive ones — the usual Arch base is assumed:
 **VirtualBox mode:**
 * `virtualbox-guest-utils`
 
-## Disk Layout 💽
+## Disk Layout
 
 Example (`/dev/sda`):
 * `/dev/sda1` → EFI (FAT32) mounted at `/boot`
@@ -83,7 +83,7 @@ Example (`/dev/sda`):
 
 GRUB passes `cryptdevice=<partition>:volgroup0` to unlock at boot.
 
-## Dotfiles 🎨
+## Dotfiles
 
 Integrates with [sneivandt/dotfiles](https://github.com/sneivandt/dotfiles):
 * Minimal: `dotfiles.sh -I --profile arch`
@@ -91,7 +91,7 @@ Integrates with [sneivandt/dotfiles](https://github.com/sneivandt/dotfiles):
 
 The dotfiles repository provides profile-based configuration for shell environments (zsh, bash), editors (neovim, VS Code), window managers (xmonad), and more.
 
-## Customize ✏️
+## Customize
 
 Consider editing before running:
 * Timezone (`US/Pacific` hardcoded)
@@ -100,27 +100,27 @@ Consider editing before running:
 * Package selections in `packages` and `packages_gui` arrays
 * DNS (Google resolvers pinned + immutable)
 
-## Security 🔐
+## Security
 
 * Full disk encryption (root + swap)
 * Root locked (`nologin`)
 * Sudo briefly passwordless for bootstrap then restored
 * Immutable `/etc/resolv.conf` (Google DNS) — change if undesired
 
-## Requirements ✅
+## Requirements
 
 * Arch Linux live ISO (UEFI target)
 * Stable internet connection
 * Entire target disk available (no multi‑boot support yet)
 
-## Troubleshooting 🛠️
+## Troubleshooting
 
 * Small terminal → dialog truncation: enlarge window
 * Time or key errors → ensure NTP active (`timedatectl set-ntp true`)
 * Package installation issues → check internet connection and mirrors
 * No NVIDIA prompt → device not detected (falls back to generic driver)
 
-## Development 🧪
+## Development
 
 ### CI/CD
 
