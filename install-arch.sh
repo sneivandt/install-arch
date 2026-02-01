@@ -142,7 +142,8 @@ if [ "$mode" -eq 2 ]; then
 fi
 
 # Logging
-if [ "$TEST_MODE" = false ]; then
+# Only log to files when not in test mode
+if [ "${TEST_MODE:-false}" != "true" ]; then
   # Simple file redirection without process substitution
   exec 1>> "stdout.log"
   exec 2>> "stderr.log"
