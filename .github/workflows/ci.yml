@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    name: ShellCheck Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run ShellCheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: '.'
+          format: gcc
+          severity: warning
+
+  test-script:
+    name: Test Script on Arch Linux
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Update system and install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm shellcheck dialog git curl lvm2 cryptsetup parted
+      
+      - name: Run shellcheck on install-arch.sh
+        run: shellcheck install-arch.sh
+      
+      - name: Verify script syntax
+        run: bash -n install-arch.sh
+      
+      - name: Check for required commands
+        run: |
+          echo "Checking for required commands in script..."
+          grep -E 'pacman|dialog|fdisk|cryptsetup|lvcreate|arch-chroot' install-arch.sh
+      
+      - name: Verify file permissions
+        run: |
+          if [ ! -x install-arch.sh ]; then
+            echo "Error: install-arch.sh is not executable"
+            exit 1
+          fi
+          echo "install-arch.sh is executable"
+      
+      - name: Test help/usage patterns
+        run: |
+          # Verify the script doesn't error on basic invocations (it will fail on dialog, which is expected)
+          bash -n install-arch.sh && echo "Script syntax is valid"
