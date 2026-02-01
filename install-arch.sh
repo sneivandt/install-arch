@@ -21,48 +21,115 @@ set -o pipefail
 # Trap errors with line number + failing command.
 trap 'echo "$0: Error on line "$LINENO": $BASH_COMMAND"' ERR
 
-# Ensure dialog is present for interactive prompts.
-pacman -Sy --noconfirm dialog
+# Parse command line arguments
+DRY_RUN=false
+TEST_MODE=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
+    --test-mode)
+      TEST_MODE=true
+      shift
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo "Usage: $0 [--dry-run] [--test-mode]"
+      exit 1
+      ;;
+  esac
+done
+
+# Ensure dialog is present for interactive prompts (skip in test mode).
+if [ "$TEST_MODE" = false ]; then
+  pacman -Sy --noconfirm dialog
+fi
+
+# Helper functions for dry-run mode
+run_cmd() {
+  if [ "$DRY_RUN" = true ]; then
+    echo "[DRY-RUN] Would execute: $*"
+  else
+    "$@"
+  fi
+}
+
+run_piped_cmd() {
+  local cmd_desc="$1"
+  if [ "$DRY_RUN" = true ]; then
+    echo "[DRY-RUN] Would execute: $cmd_desc"
+  else
+    return 0  # Let the actual command run
+  fi
+}
 
 # }}}
 # Input ------------------------------------------------------------------- {{{
 # Collect required interactive parameters before mutating system state.
 
 # Install mode
-mode=$(dialog --stdout --clear --menu "Select install mode" 0 0 0 "1" "Minimal" "2" "Workstation" "3" "VirtualBox") || exit 1
+if [ "$TEST_MODE" = true ]; then
+  mode="${TEST_MODE_MODE:-1}"
+else
+  mode=$(dialog --stdout --clear --menu "Select install mode" 0 0 0 "1" "Minimal" "2" "Workstation" "3" "VirtualBox") || exit 1
+fi
 
 # Hostname
-hostname=$(dialog --stdout --clear --inputbox "Enter hostname" 0 40) || exit 1
+if [ "$TEST_MODE" = true ]; then
+  hostname="${TEST_MODE_HOSTNAME:-testhost}"
+else
+  hostname=$(dialog --stdout --clear --inputbox "Enter hostname" 0 40) || exit 1
+fi
 [ -z "$hostname" ] && echo "hostname cannot be empty" && exit 1
 
 # Username
-user=$(dialog --stdout --clear --inputbox "Enter username" 0 40) || exit 1
+if [ "$TEST_MODE" = true ]; then
+  user="${TEST_MODE_USER:-testuser}"
+else
+  user=$(dialog --stdout --clear --inputbox "Enter username" 0 40) || exit 1
+fi
 [ -z "$user" ] && echo "username cannot be empty" && exit 1
 
 # User password
-password1=$(dialog --stdout --clear --insecure --passwordbox "Enter password" 0 40) || exit 1
-[ -z "$password1" ] && echo "password cannot be empty" && exit 1
-password2=$(dialog --stdout --clear --insecure --passwordbox "Enter password again" 0 40) || exit 1
+if [ "$TEST_MODE" = true ]; then
+  password1="${TEST_MODE_PASSWORD:-testpass123}"
+  password2="$password1"
+else
+  password1=$(dialog --stdout --clear --insecure --passwordbox "Enter password" 0 40) || exit 1
+  [ -z "$password1" ] && echo "password cannot be empty" && exit 1
+  password2=$(dialog --stdout --clear --insecure --passwordbox "Enter password again" 0 40) || exit 1
+fi
 if [ "$password1" != "$password2" ]; then echo "Passwords did not match"; exit 1; fi
 
 # Installation disk
-devicelist=$(lsblk -dplnx size -o name,size | grep -Ev "boot|rpmb|loop" | tac)
-# shellcheck disable=SC2086
-device=$(dialog --stdout --clear --menu "Select installation disk" 0 0 0 ${devicelist}) || exit 1
+if [ "$TEST_MODE" = true ]; then
+  device="${TEST_MODE_DEVICE:-/dev/loop0}"
+else
+  devicelist=$(lsblk -dplnx size -o name,size | grep -Ev "boot|rpmb|loop" | tac)
+  # shellcheck disable=SC2086
+  device=$(dialog --stdout --clear --menu "Select installation disk" 0 0 0 ${devicelist}) || exit 1
+fi
 dpfx=""
 case "$device" in
   "/dev/nvme"*) dpfx="p"
 esac
 
 # Encryption password
-password_luks1=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password" 0 40) || exit 1
-[ -z "$password_luks1" ] && echo "disk encryption password cannot be empty" && exit 1
-password_luks2=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password again" 0 40) || exit 1
+if [ "$TEST_MODE" = true ]; then
+  password_luks1="${TEST_MODE_LUKS_PASSWORD:-lukspass123}"
+  password_luks2="$password_luks1"
+else
+  password_luks1=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password" 0 40) || exit 1
+  [ -z "$password_luks1" ] && echo "disk encryption password cannot be empty" && exit 1
+  password_luks2=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password again" 0 40) || exit 1
+fi
 if [ "$password_luks1" != "$password_luks2" ]; then echo "Passwords did not match"; exit 1; fi
 
 # Video driver
 video_driver=""
-if [ "$mode" -eq 2 ] && lspci | grep -e VGA -e 3D | grep -q NVIDIA
+if [ "$mode" -eq 2 ] && [ "$TEST_MODE" = false ] && lspci | grep -e VGA -e 3D | grep -q NVIDIA
 then
   video_drivers=(0 nvidia 1 nvidia-340xx 2 nvidia-390xx 3 xf86-video-nouveau)
   # shellcheck disable=SC2068
@@ -80,7 +147,10 @@ exec 2> >(tee "stderr.log")
 # Setup the disk
 
 # Partitioning
-fdisk "$device" <<'EOF' # p1 make type 1 (UEFI)
+if [ "$DRY_RUN" = true ]; then
+  echo "[DRY-RUN] Would partition $device with fdisk"
+else
+  fdisk "$device" <<'EOF' # p1 make type 1 (UEFI)
 g
 n
 1
@@ -95,33 +165,42 @@ t
 8e
 w
 EOF
+fi
 
 # Encrypt root drive
-echo -n "$password_luks1" | cryptsetup luksFormat --type luks2 "$device$dpfx"2 -
+if [ "$DRY_RUN" = true ]; then
+  echo "[DRY-RUN] Would encrypt ${device}${dpfx}2 with LUKS2"
+else
+  echo -n "$password_luks1" | cryptsetup luksFormat --type luks2 "$device$dpfx"2 -
+fi
 
 # Open root drive
-echo -n "$password_luks1" | cryptsetup open "$device$dpfx"2 cryptlvm -
+if [ "$DRY_RUN" = true ]; then
+  echo "[DRY-RUN] Would open LUKS device ${device}${dpfx}2 as cryptlvm"
+else
+  echo -n "$password_luks1" | cryptsetup open "$device$dpfx"2 cryptlvm -
+fi
 
 # Create physical volume
-pvcreate /dev/mapper/cryptlvm
+run_cmd pvcreate /dev/mapper/cryptlvm
 
 # Create volume group
-vgcreate volgroup0 /dev/mapper/cryptlvm
+run_cmd vgcreate volgroup0 /dev/mapper/cryptlvm
 
 # Create logical volumes
-lvcreate -L 1G volgroup0 -n swap
-lvcreate -l 100%FREE volgroup0 -n root
+run_cmd lvcreate -L 1G volgroup0 -n swap
+run_cmd lvcreate -l 100%FREE volgroup0 -n root
 
 # Format
-mkswap /dev/mapper/volgroup0-swap
-mkfs.ext4 /dev/mapper/volgroup0-root
-mkfs.vfat -F32 -n EFI "$device$dpfx"1
+run_cmd mkswap /dev/mapper/volgroup0-swap
+run_cmd mkfs.ext4 /dev/mapper/volgroup0-root
+run_cmd mkfs.vfat -F32 -n EFI "$device$dpfx"1
 
 # Mount
-mount /dev/mapper/volgroup0-root /mnt
-swapon /dev/mapper/volgroup0-swap
-mkdir /mnt/boot
-mount "$device$dpfx"1 /mnt/boot
+run_cmd mount /dev/mapper/volgroup0-root /mnt
+run_cmd swapon /dev/mapper/volgroup0-swap
+run_cmd mkdir /mnt/boot
+run_cmd mount "$device$dpfx"1 /mnt/boot
 
 # }}}
 # Pacstrap ---------------------------------------------------------------- {{{
@@ -129,7 +208,11 @@ mount "$device$dpfx"1 /mnt/boot
 # Install packages
 
 # Update mirrors
-curl -sL 'https://www.archlinux.org/mirrorlist/?country=US&protocol=https&ip_version=4' | sed 's/^#Server/Server/' > /etc/pacman.d/mirrorlist
+if [ "$DRY_RUN" = true ]; then
+  echo "[DRY-RUN] Would update mirrorlist"
+else
+  curl -sL 'https://www.archlinux.org/mirrorlist/?country=US&protocol=https&ip_version=4' | sed 's/^#Server/Server/' > /etc/pacman.d/mirrorlist
+fi
 
 # Base packages
 packages=(
@@ -226,7 +309,7 @@ case "$mode" in
 esac
 
 # Pacstrap
-pacstrap /mnt "${packages[@]}"
+run_cmd pacstrap /mnt "${packages[@]}"
 
 # }}}
 # General ----------------------------------------------------------------- {{{
@@ -234,10 +317,14 @@ pacstrap /mnt "${packages[@]}"
 # General system config
 
 # Generate filesystem table
-genfstab -U /mnt >> /mnt/etc/fstab
+if [ "$DRY_RUN" = true ]; then
+  echo "[DRY-RUN] Would generate fstab"
+else
+  genfstab -U /mnt >> /mnt/etc/fstab
+fi
 
 # sh -> dash
-arch-chroot /mnt ln -sfT dash /usr/bin/sh
+run_cmd arch-chroot /mnt ln -sfT dash /usr/bin/sh
 
 # Set hostname
 echo "$hostname" > /mnt/etc/hostname

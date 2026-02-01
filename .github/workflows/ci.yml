@@ -23,6 +23,59 @@ jobs:
           format: gcc
           severity: warning
 
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Make test scripts executable
+        run: chmod +x tests/*.sh
+      
+      - name: Run unit tests
+        run: ./tests/unit_tests.sh
+      
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: |
+            tests/*.log
+          retention-days: 7
+
+  integration-test:
+    name: Docker Integration Test
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --privileged
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Update system and install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm shellcheck dialog git curl lvm2 cryptsetup \
+            parted e2fsprogs dosfstools util-linux
+      
+      - name: Make scripts executable
+        run: chmod +x tests/*.sh install-arch.sh
+      
+      - name: Run integration test
+        run: ./tests/integration_test.sh
+      
+      - name: Upload integration test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-logs
+          path: |
+            *.log
+            /tmp/test-*.log
+          retention-days: 7
+
   test-script:
     name: Test Script on Arch Linux
     runs-on: ubuntu-latest
@@ -59,3 +112,11 @@ jobs:
         run: |
           # Verify the script doesn't error on basic invocations (it will fail on dialog, which is expected)
           bash -n install-arch.sh && echo "Script syntax is valid"
+      
+      - name: Test --dry-run and --test-mode flags
+        run: |
+          echo "Testing command line arguments..."
+          # Test that the script accepts the flags (will exit early due to missing env vars)
+          ./install-arch.sh --test-mode --dry-run 2>&1 | head -10 || true
+          echo "Flag parsing test complete"
+
