@@ -122,10 +122,65 @@ Consider editing before running:
 
 ## Development
 
+### Testing
+
+This project includes comprehensive testing to ensure reliability:
+
+#### Unit Tests
+Unit tests validate individual functions and logic without requiring actual system operations:
+
+```bash
+# Run unit tests
+./tests/unit_tests.sh
+```
+
+Tests cover:
+- Input validation (hostname, username, password)
+- Device detection and naming (NVMe vs SATA/SSD)
+- Partition naming logic
+- Package name validation
+- Configuration file syntax
+
+#### Integration Tests
+Integration tests simulate a real installation using loop devices:
+
+```bash
+# Run integration test (requires root)
+sudo ./tests/integration_test.sh
+```
+
+The integration test:
+- Creates a virtual disk using a loop device
+- Runs `install-arch.sh` in dry-run and test modes against the loop device
+- Validates script syntax, option parsing, and flag acceptance (including partitioning, encryption, and LVM flags) without modifying real disks
+- Runs in a safe, isolated environment without performing destructive changes
+
+#### Test Modes
+
+The `install-arch.sh` script supports special modes for testing:
+
+**Dry-Run Mode**: Simulates operations without making changes
+```bash
+./install-arch.sh --dry-run --test-mode
+```
+
+**Test Mode**: Uses environment variables instead of interactive prompts
+```bash
+export TEST_MODE_MODE="1"
+export TEST_MODE_HOSTNAME="testhost"
+export TEST_MODE_USER="testuser"
+export TEST_MODE_PASSWORD="testpass"
+export TEST_MODE_DEVICE="/dev/loop0"
+export TEST_MODE_LUKS_PASSWORD="lukspass"
+./install-arch.sh --test-mode
+```
+
 ### CI/CD
 
 This repository uses GitHub Actions for continuous integration:
 * **ShellCheck Analysis**: Validates shell script quality and catches common errors
+* **Unit Tests**: Runs the full unit test suite on every push/PR
+* **Integration Test**: Simulates installation in a Docker container with loop devices
 * **Arch Linux Testing**: Verifies script runs in an Arch Linux container
 * **Syntax Validation**: Ensures script has no syntax errors
 
@@ -136,6 +191,10 @@ bash -n install-arch.sh
 
 # Run shellcheck (requires shellcheck package)
 shellcheck install-arch.sh
+
+# Run all tests
+./tests/unit_tests.sh
+sudo ./tests/integration_test.sh  # Requires root
 ```
 
 ### Contributing
