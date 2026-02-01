@@ -134,56 +134,66 @@ curl -sL 'https://www.archlinux.org/mirrorlist/?country=US&protocol=https&ip_ver
 packages=(
   base \
   base-devel \
+  bat \
+  btop \
   ctags \
   curl \
-  dhcpcd \
   dash \
+  dhcpcd \
   docker \
+  duf \
   efibootmgr \
+  eza \
+  fd \
+  fzf \
   git \
+  git-delta \
   grub \
+  jq \
+  lazygit \
   linux \
   linux-firmware \
   linux-headers \
-  jq \
   lvm2 \
-  mlocate \
+  man-db \
+  man-pages \
   neovim \
-  ntp \
   openssh \
   pacman-contrib \
-  python-pip \
-  python-requests \
+  ripgrep \
+  sed \
   shellcheck \
   tmux \
   vim \
   wget \
+  xdg-user-dirs \
   zip \
-  zsh
+  zoxide \
+  zsh \
+  zsh-autosuggestions \
+  zsh-completions \
+  zsh-syntax-highlighting
 )
 
-# Workastation packages
+# Workstation packages
 packages_gui=(
   adobe-source-code-pro-fonts \
+  alacritty \
   alsa-utils \
-  chromium \
-  compton \
-  dmenu \
   dunst \
   feh \
+  flameshot \
   noto-fonts-cjk \
   noto-fonts-emoji \
-  rxvt-unicode \
-  playerctl \
+  papirus-icon-theme \
+  picom \
   redshift \
-  slock \
-  ttf-dejavu \
-  ttf-font-awesome-5 \
-  xautolock \
-  xmobar \
+  rofi \
+  rxvt-unicode \
+  urxvt-perls \
+  xclip \
   xmonad \
   xmonad-contrib \
-  xclip \
   xorg \
   xorg-server \
   xorg-xinit \
@@ -330,31 +340,19 @@ EOF
 # }}}
 # AUR --------------------------------------------------------------------- {{{
 #
-# Install selected AUR packages using temporary trizen user
+# Install paru AUR helper using temporary build user
 
 # Create temporary AUR build user
-arch-chroot /mnt useradd -m -d /opt/trizen trizen
-echo "trizen ALL=(ALL) NOPASSWD: ALL" >> /mnt/etc/sudoers
+arch-chroot /mnt useradd -m -d /opt/aurbuilder aurbuilder
+echo "aurbuilder ALL=(ALL) NOPASSWD: ALL" >> /mnt/etc/sudoers
 
-# Clone and build trizen-git helper
-arch-chroot /mnt su trizen -c "git clone https://aur.archlinux.org/trizen-git.git /opt/trizen/trizen-git && cd /opt/trizen/trizen-git && makepkg -si --noconfirm"
-
-# Install AUR packages for workstation modes
-case "$mode" in
-  2|3)
-    arch-chroot /mnt su trizen -c "trizen --noconfirm -S \
-      chromium-widevine \
-      fzf \
-      otf-font-awesome \
-      vertex-themes \
-      visual-studio-code-insiders-bin"
-    ;;
-esac
+# Clone and build paru-bin helper
+arch-chroot /mnt su aurbuilder -c "git clone https://aur.archlinux.org/paru-bin.git /opt/aurbuilder/paru-bin && cd /opt/aurbuilder/paru-bin && makepkg -si --noconfirm"
 
 # Remove temporary build user and its sudo privileges
-arch-chroot /mnt userdel trizen
-rm -rf /mnt/opt/trizen
-sed -i '/trizen/d' /mnt/etc/sudoers
+arch-chroot /mnt userdel aurbuilder
+rm -rf /mnt/opt/aurbuilder
+sed -i '/aurbuilder/d' /mnt/etc/sudoers
 
 # }}}
 # Users  ------------------------------------------------------------------ {{{
