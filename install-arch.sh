@@ -593,12 +593,13 @@ bantime = 3600
 findtime = 600
 # Ban after 5 failed attempts
 maxretry = 5
+# Use systemd backend for journal-based logging
+backend = systemd
 
 [sshd]
 enabled = true
 port = ssh
 filter = sshd
-logpath = /var/log/auth.log
 EOF
 fi
 
