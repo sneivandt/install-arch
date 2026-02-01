@@ -418,6 +418,8 @@ run_cmd arch-chroot /mnt systemctl enable NetworkManager.service
 
 # Enable systemd-resolved for DNS with DNSSEC support
 run_cmd arch-chroot /mnt systemctl enable systemd-resolved.service
+# Ensure resolv.conf is managed by systemd-resolved for NetworkManager integration
+run_cmd arch-chroot /mnt ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 
 # Enable firewall for basic security hardening
 run_cmd arch-chroot /mnt systemctl enable ufw.service
