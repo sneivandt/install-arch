@@ -14,6 +14,8 @@ curl -sL https://git.io/vpvGR | bash
 
 Interactive prompts (via `dialog`) cover: mode, hostname, user/password, disk encryption password, target disk, and (when relevant) NVIDIA driver choice. Output is logged to `stdout.log` and `stderr.log`.
 
+> **⚠️ WARNING**: This script will **ERASE THE ENTIRE TARGET DISK**. Only run on a system where data loss is acceptable or on a fresh installation target.
+
 ## Modes
 
 | Mode | Purpose | Extras |
@@ -22,7 +24,13 @@ Interactive prompts (via `dialog`) cover: mode, hostname, user/password, disk en
 | Workstation (2) | Lightweight X11 + tiling WM | Desktop + optional NVIDIA + paru AUR helper |
 | VirtualBox (3) | Workstation for VM guests | Adds guest integrations |
 
-## Flow
+**Minimal mode** provides a lean, fast command-line system perfect for servers, development machines, or users who prefer terminal-based workflows.
+
+**Workstation mode** adds a complete desktop environment with XMonad tiling window manager, perfect for power users who want efficiency and customization.
+
+**VirtualBox mode** is identical to Workstation but includes VirtualBox Guest Additions for seamless VM integration.
+
+## Installation Flow
 
 1. Collect input (dialog)
 2. GPT partitioning: EFI (512M) + encrypted LUKS2 container
@@ -83,15 +91,15 @@ Example (`/dev/sda`):
 
 GRUB passes `cryptdevice=<partition>:volgroup0` to unlock at boot.
 
-## Dotfiles
+## Dotfiles Integration
 
 Integrates with [sneivandt/dotfiles](https://github.com/sneivandt/dotfiles):
 * Minimal: `dotfiles.sh -I --profile arch`
 * Workstation / VirtualBox: `dotfiles.sh -I --profile arch-desktop`
 
-The dotfiles repository provides profile-based configuration for shell environments (zsh, bash), editors (neovim, VS Code), window managers (xmonad), and more.
+The dotfiles repository provides profile-based configuration for shell environments (zsh, bash), editors (neovim, VS Code), window managers (xmonad), and more. This separation allows you to maintain your personal configurations separately from the installation script.
 
-## Customize
+## Customization
 
 Consider editing before running:
 * Timezone (`US/Pacific` hardcoded)
@@ -102,23 +110,61 @@ Consider editing before running:
 
 ## Security
 
-* Full disk encryption (root + swap)
-* Root locked (`nologin`)
-* Sudo briefly passwordless for bootstrap then restored
-* Immutable `/etc/resolv.conf` (Google DNS) — change if undesired
+This installation prioritizes security with multiple layers of protection:
+
+* **Full disk encryption** (root + swap) using LUKS2
+* **Root account locked** (`nologin`) - preventing direct root login
+* **Sudo briefly passwordless** for bootstrap, then restored to require password
+* **Immutable `/etc/resolv.conf`** (Google DNS) — change if undesired
+* **User isolation** - regular user account with sudo access via wheel group
+* **Modern encryption** - LUKS2 with strong defaults
+
+> **Note**: The immutable DNS configuration uses Google's public DNS servers (8.8.8.8, 8.8.4.4). To change DNS servers after installation:
+> 1. Remove immutable attribute: `chattr -i /etc/resolv.conf`
+> 2. Edit the file with your preferred DNS: `echo "nameserver 1.1.1.1" > /etc/resolv.conf`
+> 3. Optionally restore immutability: `chattr +i /etc/resolv.conf`
 
 ## Requirements
 
-* Arch Linux live ISO (UEFI target)
-* Stable internet connection
-* Entire target disk available (no multi‑boot support yet)
+* **Arch Linux live ISO** (UEFI target required)
+* **Stable internet connection** for package downloads
+* **Entire target disk available** (no multi‑boot support yet)
+* **Minimum disk space**: 20GB recommended (10GB absolute minimum)
+* **UEFI firmware** (Legacy BIOS not supported)
+
+> **Important**: Ensure your system supports UEFI boot mode. Most modern systems (2012+) support UEFI, but older hardware may not.
+>
+> **Verify UEFI mode**: Before starting installation, confirm you're booted in UEFI mode by checking if `/sys/firmware/efi` exists:
+> ```bash
+> ls /sys/firmware/efi && echo "UEFI mode confirmed" || echo "Not in UEFI mode"
+> ```
 
 ## Troubleshooting
 
-* Small terminal → dialog truncation: enlarge window
-* Time or key errors → ensure NTP active (`timedatectl set-ntp true`)
-* Package installation issues → check internet connection and mirrors
-* No NVIDIA prompt → device not detected (falls back to generic driver)
+### Common Issues
+
+* **Small terminal → dialog truncation**: Enlarge window or use larger virtual console
+* **Time or key errors**: Ensure NTP active: `timedatectl set-ntp true`
+* **Package installation issues**: 
+  - Check internet connection: `ping archlinux.org`
+  - Verify mirror list: `cat /etc/pacman.d/mirrorlist`
+  - Update keyring: `pacman -Sy archlinux-keyring`
+* **No NVIDIA prompt**: Device not detected (falls back to generic driver)
+* **Boot fails after installation**: 
+  - Verify GRUB installation completed
+  - Check BIOS/UEFI settings for boot order
+  - Ensure LUKS password is correct
+* **Dialog crashes or doesn't display**: Terminal too small, resize to at least 80x24
+
+### Getting Help
+
+1. Check the logs: `stdout.log` and `stderr.log` in the current directory
+2. Review error messages carefully - they usually indicate the specific issue
+3. Open an issue on GitHub with:
+   - Full error message
+   - Contents of log files
+   - Hardware details (especially for disk/NVIDIA issues)
+   - Mode selected and any customizations made
 
 ## Development
 
@@ -199,4 +245,65 @@ sudo ./tests/integration_test.sh  # Requires root
 
 ### Contributing
 
-See [.github/copilot-instructions.md](.github/copilot-instructions.md) for detailed shell scripting guidelines and code standards used in this project.
+Contributions are welcome! Please:
+
+1. **Read the guidelines**: See [.github/copilot-instructions.md](.github/copilot-instructions.md) for detailed shell scripting guidelines and code standards
+2. **Fork and branch**: Create a feature branch from `main`
+3. **Follow conventions**: 
+   - Shell script best practices (quote variables, use set options)
+   - ShellCheck must pass with no warnings
+   - Follow existing code style
+4. **Test thoroughly**:
+   - Run unit tests: `./tests/unit_tests.sh`
+   - Run integration tests: `sudo ./tests/integration_test.sh`
+   - Test in a VM for destructive changes
+5. **Submit a PR**: Use the pull request template and fill out all sections
+6. **Be patient**: Reviews may take time, especially for security-critical changes
+
+### Code Standards
+
+- All shell scripts must pass ShellCheck analysis
+- Quote all variables to prevent word splitting
+- Use `set -o errexit`, `set -o nounset`, `set -o pipefail`
+- Add error traps with line numbers
+- Validate all user input
+- Test in isolated environments (never on production systems)
+- Document complex logic with comments
+- Keep changes minimal and focused
+
+### Development Workflow
+
+```bash
+# Clone the repository
+git clone https://github.com/sneivandt/install-arch.git
+cd install-arch
+
+# Create a feature branch
+git checkout -b feature/my-feature
+
+# Make changes and test
+./tests/unit_tests.sh                    # Unit tests
+sudo ./tests/integration_test.sh         # Integration tests
+shellcheck install-arch.sh               # ShellCheck analysis
+bash -n install-arch.sh                  # Syntax check
+
+# Test in a VM
+# (Use VirtualBox, QEMU, or your preferred virtualization)
+
+# Commit and push
+git add .
+git commit -m "feat: Add new feature"
+git push origin feature/my-feature
+
+# Open a pull request on GitHub
+```
+
+## License
+
+See [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- Arch Linux community for excellent documentation
+- All contributors who have helped improve this script
+- Dialog utility for the interactive TUI interface
