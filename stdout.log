@@ -1,0 +1,51 @@
+[DRY-RUN] Would partition /dev/loop0 with fdisk
+[DRY-RUN] Would encrypt /dev/loop02 with LUKS2
+[DRY-RUN] Would open LUKS device /dev/loop02 as cryptlvm
+[DRY-RUN] Would execute: pvcreate /dev/mapper/cryptlvm
+[DRY-RUN] Would execute: vgcreate volgroup0 /dev/mapper/cryptlvm
+[DRY-RUN] Would execute: lvcreate -L 1G volgroup0 -n swap
+[DRY-RUN] Would execute: lvcreate -l 100%FREE volgroup0 -n root
+[DRY-RUN] Would execute: mkswap /dev/mapper/volgroup0-swap
+[DRY-RUN] Would execute: mkfs.ext4 /dev/mapper/volgroup0-root
+[DRY-RUN] Would execute: mkfs.vfat -F32 -n EFI /dev/loop01
+[DRY-RUN] Would execute: mount /dev/mapper/volgroup0-root /mnt
+[DRY-RUN] Would execute: swapon /dev/mapper/volgroup0-swap
+[DRY-RUN] Would execute: mkdir /mnt/boot
+[DRY-RUN] Would execute: mount /dev/loop01 /mnt/boot
+[DRY-RUN] Would update mirrorlist
+[DRY-RUN] Would execute: pacstrap /mnt base base-devel bat btop ctags curl dash dhcpcd docker duf efibootmgr eza fd fzf git git-delta grub jq lazygit linux linux-firmware linux-headers lvm2 man-db man-pages neovim openssh pacman-contrib ripgrep sed shellcheck tmux vim wget xdg-user-dirs zip zoxide zsh zsh-autosuggestions zsh-completions zsh-syntax-highlighting
+[DRY-RUN] Would generate fstab
+[DRY-RUN] Would execute: arch-chroot /mnt ln -sfT dash /usr/bin/sh
+[DRY-RUN] Would set hostname to testhost
+[DRY-RUN] Would set locale to en_US.UTF-8
+[DRY-RUN] Would execute: arch-chroot /mnt locale-gen
+[DRY-RUN] Would configure DNS resolvers
+[DRY-RUN] Would execute: arch-chroot /mnt ln -sf /usr/share/zoneinfo/US/Pacific /etc/localtime
+[DRY-RUN] Would execute: arch-chroot /mnt systemctl enable dhcpcd.service
+[DRY-RUN] Would execute: arch-chroot /mnt systemctl enable docker.service
+[DRY-RUN] Would execute: arch-chroot /mnt systemctl enable systemd-timesyncd.service
+[DRY-RUN] Would execute: arch-chroot /mnt systemctl enable paccache.timer
+[DRY-RUN] Would configure pacman options
+[DRY-RUN] Would execute: mkdir -p /mnt/etc/pacman.d/hooks
+[DRY-RUN] Would create pacman hooks
+[DRY-RUN] Would execute: arch-chroot /mnt useradd -m -d /opt/aurbuilder aurbuilder
+[DRY-RUN] Would create sudoers file for aurbuilder
+[DRY-RUN] Would execute: arch-chroot /mnt su aurbuilder -c git clone https://aur.archlinux.org/paru-bin.git /opt/aurbuilder/paru-bin && cd /opt/aurbuilder/paru-bin && git checkout 0313c65 && makepkg -si --noconfirm
+[DRY-RUN] Would execute: arch-chroot /mnt userdel aurbuilder
+[DRY-RUN] Would execute: rm -rf /mnt/opt/aurbuilder
+[DRY-RUN] Would execute: rm -f /mnt/etc/sudoers.d/aurbuilder
+[DRY-RUN] Would execute: arch-chroot /mnt useradd -mU -G docker,wheel -s /bin/zsh -p $1$6arzO.zq$35DL.GFAxgGgvphrX0qdE0 testuser
+[DRY-RUN] Would execute: arch-chroot /mnt chsh -s /bin/zsh testuser
+[DRY-RUN] Would modify sudoers for passwordless sudo
+[DRY-RUN] Would execute: arch-chroot /mnt passwd -l root
+[DRY-RUN] Would execute: arch-chroot /mnt usermod -s /sbin/nologin root
+[DRY-RUN] Would execute: arch-chroot /mnt su testuser -c git clone https://github.com/sneivandt/dotfiles.git /home/testuser/src/dotfiles
+[DRY-RUN] Would execute: arch-chroot /mnt su testuser -c /home/testuser/src/dotfiles/dotfiles.sh -I --profile arch
+[DRY-RUN] Would restore sudo password requirement
+[DRY-RUN] Would configure mkinitcpio hooks
+[DRY-RUN] Would execute: arch-chroot /mnt mkinitcpio -p linux
+[DRY-RUN] Would execute: arch-chroot /mnt grub-install /dev/loop0 --efi-directory=/boot
+[DRY-RUN] Would execute: arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
+[DRY-RUN] Would configure GRUB cryptdevice parameter
+[DRY-RUN] Would execute: umount -R /mnt
+[DRY-RUN] Would execute: swapoff -a
