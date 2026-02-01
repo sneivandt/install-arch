@@ -4,23 +4,6 @@ Automated, opinionated provisioning of an [Arch Linux](https://archlinux.org) sy
 
 [![CI](https://github.com/sneivandt/install-arch/actions/workflows/ci.yml/badge.svg)](https://github.com/sneivandt/install-arch/actions/workflows/ci.yml)
 
-## Table of Contents
-
-- [Quick Start](#quick-start)
-- [Modes](#modes)
-- [Installation Flow](#installation-flow)
-- [Noteworthy Packages](#noteworthy-packages)
-- [Disk Layout](#disk-layout)
-- [Dotfiles Integration](#dotfiles-integration)
-- [Customization](#customization)
-- [Security](#security)
-- [Requirements](#requirements)
-- [Troubleshooting](#troubleshooting)
-- [Development](#development)
-  - [Testing](#testing)
-  - [CI/CD](#cicd)
-  - [Contributing](#contributing)
-
 ## Quick Start
 
 Boot the Arch Linux live ISO, bring up networking, then:
