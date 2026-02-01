@@ -606,8 +606,9 @@ fi
 
 # Configure reflector for automatic mirror updates
 if [ "$DRY_RUN" = "true" ]; then
-  echo "[DRY-RUN] Would configure reflector"
+  echo "[DRY-RUN] Would create /mnt/etc/xdg/reflector and configure reflector"
 else
+  mkdir -p "/mnt/etc/xdg/reflector"
   cat >>/mnt/etc/xdg/reflector/reflector.conf <<'EOF'
 # Reflector configuration for automatic mirror updates
 --save /etc/pacman.d/mirrorlist
