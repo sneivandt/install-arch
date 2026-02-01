@@ -13,7 +13,7 @@
 #   3 VirtualBox Workstation (adds guest utils)
 # Logging starts only after password collection.
 set -o errexit
-set -u nounset
+set -o nounset
 set -o pipefail
 
 # Preamble ---------------------------------------------------------------- {{{
@@ -62,11 +62,12 @@ if [ "$password_luks1" != "$password_luks2" ]; then echo "Passwords did not matc
 
 # Video driver
 video_driver=""
-if [ "$mode" == 2 ] && lspci | grep -e VGA -e 3D | grep -q NVIDIA
+if [ "$mode" -eq 2 ] && lspci | grep -e VGA -e 3D | grep -q NVIDIA
 then
   video_drivers=(0 nvidia 1 nvidia-340xx 2 nvidia-390xx 3 xf86-video-nouveau)
   # shellcheck disable=SC2068
-  video_driver="${video_drivers[($(dialog --stdout --clear --menu "Select video driver" 0 0 0 ${video_drivers[@]}) + 1) * 2 - 1]}" || exit
+  driver_index=$(dialog --stdout --clear --menu "Select video driver" 0 0 0 ${video_drivers[@]}) || exit
+  video_driver="${video_drivers[$((driver_index * 2 + 1))]}"
 fi
 
 # Logging
@@ -229,10 +230,10 @@ arch-chroot /mnt ln -sfT dash /usr/bin/sh
 
 # Set hostname
 echo "$hostname" > /mnt/etc/hostname
-cat >>/mnt/etc/hosts <<'EOF'
+cat >>/mnt/etc/hosts <<EOF
 127.0.0.1 localhost.localdomain localhost
 ::1 localhost.localdomain localhost
-127.0.0.1 "$hostname".localdomain "$hostname"
+127.0.0.1 $hostname.localdomain $hostname
 EOF
 
 # Set locale
@@ -276,11 +277,8 @@ arch-chroot /mnt systemctl enable paccache.timer
 # Pacman ------------------------------------------------------------------ {{{
 
 # Basic pacman cosmetic options (color + candy progress)
-cat >>/mnt/etc/pacman.conf <<'EOF'
-[options]
-ILoveCandy
-Color
-EOF
+sed -i '/^\[options\]/a ILoveCandy' /mnt/etc/pacman.conf
+sed -i '/^\[options\]/a Color' /mnt/etc/pacman.conf
 
 mkdir -p /mnt/etc/pacman.d/hooks
 
