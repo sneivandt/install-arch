@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # Integration test for install-arch.sh
 # 
-# NOTE: This test currently validates the script can run in dry-run mode with
-# test environment variables. It creates a loop device but does not perform
-# actual disk operations. Full installation testing would require mocking
-# pacstrap and arch-chroot commands.
+# Currently validates:
+# - Script syntax and executability
+# - Command-line flag acceptance (--dry-run, --test-mode)
+# - Environment variable handling (TEST_MODE_*)
+# - Loop device creation and cleanup
+# - Dry-run mode operation without destructive actions
+#
+# NOTE: This test does not perform actual disk operations. Full installation
+# testing would require mocking pacstrap and arch-chroot commands.
 #
 # Future enhancements could include:
 # - Actual partitioning on loop device
