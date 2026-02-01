@@ -393,7 +393,7 @@ if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would configure systemd-resolved"
 else
   # Create resolved configuration for Google DNS with DNSSEC
-  cat >>/mnt/etc/systemd/resolved.conf <<'EOF'
+  cat >/mnt/etc/systemd/resolved.conf <<'EOF'
 [Resolve]
 DNS=8.8.8.8 8.8.4.4
 FallbackDNS=1.1.1.1 1.0.0.1
@@ -425,13 +425,9 @@ run_cmd arch-chroot /mnt ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resol
 run_cmd arch-chroot /mnt systemctl enable ufw.service
 
 # Configure firewall: deny incoming by default, allow outgoing
-if [ "$DRY_RUN" = "true" ]; then
-  echo "[DRY-RUN] Would configure ufw firewall defaults"
-else
-  arch-chroot /mnt ufw --force enable
-  arch-chroot /mnt ufw default deny incoming
-  arch-chroot /mnt ufw default allow outgoing
-fi
+run_cmd arch-chroot /mnt ufw --force enable
+run_cmd arch-chroot /mnt ufw default deny incoming
+run_cmd arch-chroot /mnt ufw default allow outgoing
 
 # Enable fail2ban for SSH brute-force protection
 run_cmd arch-chroot /mnt systemctl enable fail2ban.service
@@ -525,7 +521,7 @@ if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would create security hardening sysctl configuration"
 else
   mkdir -p /mnt/etc/sysctl.d
-  cat >>/mnt/etc/sysctl.d/99-security.conf <<'EOF'
+  cat >/mnt/etc/sysctl.d/99-security.conf <<'EOF'
 # Kernel hardening settings for improved security
 
 # Prevent kernel pointer leaks
@@ -588,7 +584,8 @@ fi
 if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would configure fail2ban for SSH protection"
 else
-  cat >>/mnt/etc/fail2ban/jail.local <<'EOF'
+  mkdir -p /mnt/etc/fail2ban
+  cat >/mnt/etc/fail2ban/jail.local <<'EOF'
 [DEFAULT]
 # Ban hosts for 1 hour (3600 seconds)
 bantime = 3600
@@ -611,7 +608,7 @@ if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would create /mnt/etc/xdg/reflector and configure reflector"
 else
   mkdir -p "/mnt/etc/xdg/reflector"
-  cat >>/mnt/etc/xdg/reflector/reflector.conf <<'EOF'
+  cat >/mnt/etc/xdg/reflector/reflector.conf <<'EOF'
 # Reflector configuration for automatic mirror updates
 --save /etc/pacman.d/mirrorlist
 --protocol https
