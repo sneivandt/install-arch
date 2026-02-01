@@ -29,7 +29,7 @@ pacman -Sy --noconfirm dialog
 # Collect required interactive parameters before mutating system state.
 
 # Install mode
-mode=$(dialog --stdout --clear --menu "Select install mode" 0 0 0 "1" "Minimal" "2" "Workstation" "3" "VirtualBox") || exit
+mode=$(dialog --stdout --clear --menu "Select install mode" 0 0 0 "1" "Minimal" "2" "Workstation" "3" "VirtualBox") || exit 1
 
 # Hostname
 hostname=$(dialog --stdout --clear --inputbox "Enter hostname" 0 40) || exit 1
@@ -43,7 +43,7 @@ user=$(dialog --stdout --clear --inputbox "Enter username" 0 40) || exit 1
 password1=$(dialog --stdout --clear --insecure --passwordbox "Enter password" 0 40) || exit 1
 [ -z "$password1" ] && echo "password cannot be empty" && exit 1
 password2=$(dialog --stdout --clear --insecure --passwordbox "Enter password again" 0 40) || exit 1
-if [ "$password1" != "$password2" ]; then echo "Passwords did not match"; exit; fi
+if [ "$password1" != "$password2" ]; then echo "Passwords did not match"; exit 1; fi
 
 # Installation disk
 devicelist=$(lsblk -dplnx size -o name,size | grep -Ev "boot|rpmb|loop" | tac)
@@ -58,7 +58,7 @@ esac
 password_luks1=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password" 0 40) || exit 1
 [ -z "$password_luks1" ] && echo "disk encryption password cannot be empty" && exit 1
 password_luks2=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password again" 0 40) || exit 1
-if [ "$password_luks1" != "$password_luks2" ]; then echo "Passwords did not match"; exit; fi
+if [ "$password_luks1" != "$password_luks2" ]; then echo "Passwords did not match"; exit 1; fi
 
 # Video driver
 video_driver=""
@@ -66,7 +66,7 @@ if [ "$mode" -eq 2 ] && lspci | grep -e VGA -e 3D | grep -q NVIDIA
 then
   video_drivers=(0 nvidia 1 nvidia-340xx 2 nvidia-390xx 3 xf86-video-nouveau)
   # shellcheck disable=SC2068
-  driver_index=$(dialog --stdout --clear --menu "Select video driver" 0 0 0 ${video_drivers[@]}) || exit
+  driver_index=$(dialog --stdout --clear --menu "Select video driver" 0 0 0 ${video_drivers[@]}) || exit 1
   video_driver="${video_drivers[$((driver_index * 2 + 1))]}"
 fi
 
