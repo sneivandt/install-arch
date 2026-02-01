@@ -413,7 +413,7 @@ esac
 # Set system time zone (adjust if deploying outside US/Pacific)
 run_cmd arch-chroot /mnt ln -sf /usr/share/zoneinfo/US/Pacific /etc/localtime
 
-# Enable NetworkManager for network management (replaces dhcpcd)
+# Enable NetworkManager for network management
 run_cmd arch-chroot /mnt systemctl enable NetworkManager.service
 
 # Enable systemd-resolved for DNS with DNSSEC support
