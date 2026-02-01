@@ -7,11 +7,6 @@
   "files.insertFinalNewline": true,
   "files.trimTrailingWhitespace": true,
   
-  // ShellCheck integration
-  "shellcheck.enable": true,
-  "shellcheck.run": "onSave",
-  "shellcheck.exclude": [],
-  
   // Editor settings for shell scripts
   "[shellscript]": {
     "editor.tabSize": 2,
