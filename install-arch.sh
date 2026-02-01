@@ -424,7 +424,7 @@ Depends = dash
 EOF
 
 # Hook to clean old package cache entries (retain 5)
-cat >>/mnt/etc/pacman.d/hooks/paccache.hook <<EOF
+cat >>/mnt/etc/pacman.d/hooks/paccache.hook <<'EOF'
 [Trigger]
 Operation = Remove
 Operation = Install
