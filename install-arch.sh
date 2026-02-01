@@ -44,7 +44,11 @@ done
 
 # Ensure dialog is present for interactive prompts (skip in test mode).
 if [ "$TEST_MODE" = "false" ]; then
-  pacman -Sy --noconfirm dialog
+  if ! pacman -Sy --noconfirm dialog; then
+    echo "Error: Failed to install dialog. Cannot proceed with interactive installation."
+    echo "Check your internet connection and try again."
+    exit 1
+  fi
 fi
 
 # Helper functions for dry-run mode
@@ -70,6 +74,11 @@ if [ "$TEST_MODE" = "true" ]; then
 else
   mode=$(dialog --stdout --clear --menu "Select install mode" 0 0 0 "1" "Minimal" "2" "Workstation" "3" "VirtualBox") || exit 1
 fi
+# Validate mode is 1, 2, or 3
+if [[ ! "$mode" =~ ^[1-3]$ ]]; then
+  echo "Error: Invalid mode '$mode'. Must be 1, 2, or 3."
+  exit 1
+fi
 
 # Hostname
 if [ "$TEST_MODE" = "true" ]; then
@@ -78,6 +87,13 @@ else
   hostname=$(dialog --stdout --clear --inputbox "Enter hostname" 0 40) || exit 1
 fi
 [ -z "$hostname" ] && echo "hostname cannot be empty" && exit 1
+# Convert hostname to lowercase for consistency
+hostname="${hostname,,}"
+# Validate hostname format (RFC 1123: alphanumeric and hyphens, no start/end with hyphen)
+if [[ ! "$hostname" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
+  echo "Error: Invalid hostname '$hostname'. Must be lowercase alphanumeric with optional hyphens, 1-63 characters."
+  exit 1
+fi
 
 # Username
 if [ "$TEST_MODE" = "true" ]; then
@@ -86,6 +102,11 @@ else
   user=$(dialog --stdout --clear --inputbox "Enter username" 0 40) || exit 1
 fi
 [ -z "$user" ] && echo "username cannot be empty" && exit 1
+# Validate username format (lowercase alphanumeric, underscore, hyphen; must start with letter or underscore)
+if [[ ! "$user" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
+  echo "Error: Invalid username '$user'. Must start with lowercase letter or underscore, 1-32 characters, lowercase alphanumeric/underscore/hyphen only."
+  exit 1
+fi
 
 # User password
 if [ "$TEST_MODE" = "true" ]; then
@@ -115,7 +136,7 @@ else
 fi
 dpfx=""
 case "$device" in
-  "/dev/nvme"*) dpfx="p" ;;
+  "/dev/nvme"*|"/dev/mmcblk"*) dpfx="p" ;;
 esac
 
 # Encryption password
@@ -131,7 +152,7 @@ if [ "$password_luks1" != "$password_luks2" ]; then echo "Passwords did not matc
 
 # Video driver
 video_driver=""
-if [ "$mode" -eq 2 ]; then
+if [ "$mode" -eq 2 ] || [ "$mode" -eq 3 ]; then
   if [ "$TEST_MODE" = "true" ]; then
     video_driver="${TEST_MODE_VIDEO_DRIVER:-}"
   elif lspci | grep -e VGA -e 3D | grep -q NVIDIA; then
@@ -658,7 +679,14 @@ run_cmd arch-chroot /mnt chsh -s /bin/zsh "$user"
 if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would modify sudoers for passwordless sudo"
 else
-  sed -i '/^# %wheel ALL=(ALL) NOPASSWD: ALL$/s/^# //g' /mnt/etc/sudoers
+  if ! sed -i '/^# %wheel ALL=(ALL) NOPASSWD: ALL$/s/^# //g' /mnt/etc/sudoers; then
+    echo "Warning: Failed to enable passwordless sudo for wheel group"
+  fi
+  # Verify the change was made
+  if ! grep -q "^%wheel ALL=(ALL) NOPASSWD: ALL$" /mnt/etc/sudoers; then
+    echo "Error: Failed to configure passwordless sudo. Bootstrap may fail."
+    exit 1
+  fi
 fi
 
 # Lock and disable interactive root login
@@ -680,8 +708,16 @@ esac
 if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would restore sudo password requirement"
 else
-  sed -i '/^%wheel ALL=(ALL) NOPASSWD: ALL$/s/^/# /g' /mnt/etc/sudoers
-  sed -i '/^# %wheel ALL=(ALL) ALL$/s/^# //g' /mnt/etc/sudoers
+  if ! sed -i '/^%wheel ALL=(ALL) NOPASSWD: ALL$/s/^/# /g' /mnt/etc/sudoers; then
+    echo "Warning: Failed to comment passwordless sudo line"
+  fi
+  if ! sed -i '/^# %wheel ALL=(ALL) ALL$/s/^# //g' /mnt/etc/sudoers; then
+    echo "Warning: Failed to enable password-required sudo line"
+  fi
+  # Verify the change was made
+  if ! grep -q "^%wheel ALL=(ALL) ALL$" /mnt/etc/sudoers; then
+    echo "Warning: Sudo password requirement may not be properly configured"
+  fi
 fi
 
 # }}}
@@ -693,7 +729,14 @@ fi
 if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would configure mkinitcpio hooks"
 else
-  sed -i "s/^HOOKS.*/HOOKS=(base udev autodetect keyboard keymap consolefont modconf block encrypt lvm2 filesystems fsck)/" /mnt/etc/mkinitcpio.conf
+  if ! sed -i "s/^HOOKS.*/HOOKS=(base udev autodetect keyboard keymap consolefont modconf block encrypt lvm2 filesystems fsck)/" /mnt/etc/mkinitcpio.conf; then
+    echo "Warning: Failed to update mkinitcpio hooks"
+  fi
+  # Verify the hooks were set correctly
+  if ! grep -q "^HOOKS=(base udev autodetect keyboard keymap consolefont modconf block encrypt lvm2 filesystems fsck)" /mnt/etc/mkinitcpio.conf; then
+    echo "Error: mkinitcpio hooks not properly configured. System may not boot with encryption."
+    exit 1
+  fi
 fi
 # Build initramfs for both mainline and LTS kernels
 run_cmd arch-chroot /mnt mkinitcpio -p linux
@@ -705,8 +748,13 @@ run_cmd arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
 if [ "$DRY_RUN" = "true" ]; then
   echo "[DRY-RUN] Would configure GRUB cryptdevice parameter"
 else
+  # Escape device path for sed (replace / with \/)
   device_esc=$(sed 's/\//\\\//g' <<< "$device")
-  sed -i "s/.*vmlinuz-linux.*/linux \\/vmlinuz-linux root=\\/dev\\/mapper\\/volgroup0-root rw cryptdevice=${device_esc}${dpfx}2:volgroup0 quiet/" /mnt/boot/grub/grub.cfg
+  # dpfx is either 'p' or empty, no escaping needed
+  # More specific pattern: match lines starting with linux and containing vmlinuz-linux (not linux-lts)
+  sed_pattern="^\(\s*linux\s\+\)\/vmlinuz-linux\s.*"
+  sed_replacement="\1\/vmlinuz-linux root=\/dev\/mapper\/volgroup0-root rw cryptdevice=${device_esc}${dpfx}2:volgroup0 quiet"
+  sed -i "s/${sed_pattern}/${sed_replacement}/" /mnt/boot/grub/grub.cfg
 fi
 
 # }}}
