@@ -277,8 +277,7 @@ arch-chroot /mnt systemctl enable paccache.timer
 # Pacman ------------------------------------------------------------------ {{{
 
 # Basic pacman cosmetic options (color + candy progress)
-sed -i '/^\[options\]/a ILoveCandy' /mnt/etc/pacman.conf
-sed -i '/^\[options\]/a Color' /mnt/etc/pacman.conf
+sed -i '/^\[options\]/a Color\nILoveCandy' /mnt/etc/pacman.conf
 
 mkdir -p /mnt/etc/pacman.d/hooks
 
