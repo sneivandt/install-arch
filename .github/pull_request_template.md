@@ -33,6 +33,7 @@
 - [ ] Integration tests pass (`sudo ./tests/integration_test.sh`)
 - [ ] Tested in a VM or container (if applicable)
 - [ ] Manual testing performed (describe below)
+- [ ] Dry-run mode is supported and tested with all changes (`./install-arch.sh --dry-run --test-mode`)
 
 ### Test Details
 <!-- Provide details about your testing approach -->
@@ -57,9 +58,6 @@
 - [ ] README.md updated (if applicable)
 - [ ] Code comments added/updated for complex logic
 - [ ] Usage examples updated (if applicable)
-
-## Screenshots (if applicable)
-<!-- Add screenshots to demonstrate UI/output changes -->
 
 ## Additional Notes
 <!-- Any additional information that reviewers should know -->
