@@ -87,9 +87,11 @@ else
   hostname=$(dialog --stdout --clear --inputbox "Enter hostname" 0 40) || exit 1
 fi
 [ -z "$hostname" ] && echo "hostname cannot be empty" && exit 1
+# Convert hostname to lowercase for consistency
+hostname="${hostname,,}"
 # Validate hostname format (RFC 1123: alphanumeric and hyphens, no start/end with hyphen)
-if [[ ! "$hostname" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$ ]]; then
-  echo "Error: Invalid hostname '$hostname'. Must be alphanumeric with optional hyphens, 1-63 characters."
+if [[ ! "$hostname" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
+  echo "Error: Invalid hostname '$hostname'. Must be lowercase alphanumeric with optional hyphens, 1-63 characters."
   exit 1
 fi
 
@@ -748,10 +750,11 @@ if [ "$DRY_RUN" = "true" ]; then
 else
   # Escape device path for sed (replace / with \/)
   device_esc=$(sed 's/\//\\\//g' <<< "$device")
-  # Escape dpfx for sed if it contains special characters
-  dpfx_esc=$(sed 's/\//\\\//g' <<< "$dpfx")
+  # dpfx is either 'p' or empty, no escaping needed
   # More specific pattern: match lines starting with linux and containing vmlinuz-linux (not linux-lts)
-  sed -i "s/^\(\s*linux\s\+\)\/vmlinuz-linux\s.*/\1\/vmlinuz-linux root=\/dev\/mapper\/volgroup0-root rw cryptdevice=${device_esc}${dpfx_esc}2:volgroup0 quiet/" /mnt/boot/grub/grub.cfg
+  sed_pattern="^\(\s*linux\s\+\)\/vmlinuz-linux\s.*"
+  sed_replacement="\1\/vmlinuz-linux root=\/dev\/mapper\/volgroup0-root rw cryptdevice=${device_esc}${dpfx}2:volgroup0 quiet"
+  sed -i "s/${sed_pattern}/${sed_replacement}/" /mnt/boot/grub/grub.cfg
 fi
 
 # }}}
