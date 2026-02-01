@@ -142,8 +142,10 @@ if [ "$mode" -eq 2 ]; then
 fi
 
 # Logging
-exec 1> >(tee "stdout.log")
-exec 2> >(tee "stderr.log")
+if [ "$TEST_MODE" = false ]; then
+  exec 1> >(tee "stdout.log")
+  exec 2> >(tee "stderr.log")
+fi
 
 # }}}
 # Disk -------------------------------------------------------------------- {{{
