@@ -180,6 +180,7 @@ packages_gui=(
   adobe-source-code-pro-fonts \
   alacritty \
   alsa-utils \
+  chromium \
   dunst \
   feh \
   flameshot \
@@ -344,15 +345,21 @@ EOF
 
 # Create temporary AUR build user
 arch-chroot /mnt useradd -m -d /opt/aurbuilder aurbuilder
-echo "aurbuilder ALL=(ALL) NOPASSWD: ALL" >> /mnt/etc/sudoers
 
-# Clone and build paru-bin helper
-arch-chroot /mnt su aurbuilder -c "git clone https://aur.archlinux.org/paru-bin.git /opt/aurbuilder/paru-bin && cd /opt/aurbuilder/paru-bin && makepkg -si --noconfirm"
+# Grant restricted sudo for package installation only
+cat >> /mnt/etc/sudoers.d/aurbuilder <<'EOF'
+aurbuilder ALL=(ALL) NOPASSWD: /usr/bin/pacman
+EOF
+chmod 0440 /mnt/etc/sudoers.d/aurbuilder
+
+# Clone paru-bin at specific commit and build
+# Using latest stable release commit as of 2024
+arch-chroot /mnt su aurbuilder -c "git clone https://aur.archlinux.org/paru-bin.git /opt/aurbuilder/paru-bin && cd /opt/aurbuilder/paru-bin && git checkout 0313c65 && makepkg -si --noconfirm"
 
 # Remove temporary build user and its sudo privileges
 arch-chroot /mnt userdel aurbuilder
 rm -rf /mnt/opt/aurbuilder
-sed -i '/aurbuilder/d' /mnt/etc/sudoers
+rm -f /mnt/etc/sudoers.d/aurbuilder
 
 # }}}
 # Users  ------------------------------------------------------------------ {{{

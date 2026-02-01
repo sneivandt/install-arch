@@ -62,6 +62,7 @@ Only highlighting the distinctive ones — the usual Arch base is assumed:
 **Desktop (Workstation modes):**
 * Window Manager: `xmonad`, `xmonad-contrib`
 * Terminal: `alacritty`, `rxvt-unicode`
+* Browser: `chromium`
 * Launcher: `rofi` 
 * Compositor: `picom`
 * Screenshot: `flameshot`
@@ -69,7 +70,7 @@ Only highlighting the distinctive ones — the usual Arch base is assumed:
 * Theme: `papirus-icon-theme`
 
 **AUR Helper:**
-* `paru` - Installed for user package management (replaces trizen)
+* `paru` - Installed for user package management (pinned to specific commit for security)
 
 **VirtualBox mode:**
 * `virtualbox-guest-utils`
