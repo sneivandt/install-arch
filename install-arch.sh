@@ -144,7 +144,7 @@ fi
 
 # Logging
 # Only log to files when not in test mode
-if [ "${TEST_MODE:-false}" != "true" ]; then
+if [ "$TEST_MODE" != "true" ]; then
   # Simple file redirection without process substitution
   exec 1>> "stdout.log"
   exec 2>> "stderr.log"
@@ -180,14 +180,14 @@ fi
 if [ "$DRY_RUN" = true ]; then
   echo "[DRY-RUN] Would encrypt ${device}${dpfx}2 with LUKS2"
 else
-  echo -n "$password_luks1" | cryptsetup luksFormat --type luks2 "$device$dpfx"2 -
+  echo -n "$password_luks1" | cryptsetup luksFormat --type luks2 "${device}${dpfx}2" -
 fi
 
 # Open root drive
 if [ "$DRY_RUN" = true ]; then
   echo "[DRY-RUN] Would open LUKS device ${device}${dpfx}2 as cryptlvm"
 else
-  echo -n "$password_luks1" | cryptsetup open "$device$dpfx"2 cryptlvm -
+  echo -n "$password_luks1" | cryptsetup open "${device}${dpfx}2" cryptlvm -
 fi
 
 # Create physical volume
@@ -203,13 +203,13 @@ run_cmd lvcreate -l 100%FREE volgroup0 -n root
 # Format
 run_cmd mkswap /dev/mapper/volgroup0-swap
 run_cmd mkfs.ext4 /dev/mapper/volgroup0-root
-run_cmd mkfs.vfat -F32 -n EFI "$device$dpfx"1
+run_cmd mkfs.vfat -F32 -n EFI "${device}${dpfx}1"
 
 # Mount
 run_cmd mount /dev/mapper/volgroup0-root /mnt
 run_cmd swapon /dev/mapper/volgroup0-swap
 run_cmd mkdir /mnt/boot
-run_cmd mount "$device$dpfx"1 /mnt/boot
+run_cmd mount "${device}${dpfx}1" /mnt/boot
 
 # }}}
 # Pacstrap ---------------------------------------------------------------- {{{
