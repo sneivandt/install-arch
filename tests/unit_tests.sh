@@ -255,3 +255,4 @@ test_shebang
 # Print summary and exit with appropriate code
 echo ""
 print_test_summary
+exit $?
