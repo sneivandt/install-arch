@@ -143,8 +143,9 @@ fi
 
 # Logging
 if [ "$TEST_MODE" = false ]; then
-  exec 1> >(tee "stdout.log")
-  exec 2> >(tee "stderr.log")
+  # Simple file redirection without process substitution
+  exec 1>> "stdout.log"
+  exec 2>> "stderr.log"
 fi
 
 # }}}
