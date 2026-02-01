@@ -101,10 +101,11 @@ if [ "$password1" != "$password2" ]; then echo "Passwords did not match"; exit 1
 # Installation disk
 if [ "$TEST_MODE" = true ]; then
   device="${TEST_MODE_DEVICE:-/dev/loop0}"
-  # In test mode, ensure the selected/default device exists and is a block device.
-  if [ -z "$device" ] || [ ! -b "$device" ]; then
+  # In test mode without dry-run, ensure the device exists and is a block device.
+  if [ "$DRY_RUN" = false ] && { [ -z "$device" ] || [ ! -b "$device" ]; }; then
     echo "In test mode, device \"$device\" does not exist or is not a block device."
     echo "Set TEST_MODE_DEVICE to a valid block device (for example, a loop device created with losetup)."
+    echo "Or use --dry-run mode to skip actual disk operations."
     exit 1
   fi
 else
