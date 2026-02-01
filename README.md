@@ -151,9 +151,9 @@ sudo ./tests/integration_test.sh
 
 The integration test:
 - Creates a virtual disk using a loop device
-- Simulates the full installation process
-- Validates partitioning, encryption, and LVM setup
-- Runs in a safe, isolated environment
+- Runs `install-arch.sh` in dry-run and test modes against the loop device
+- Validates script syntax, option parsing, and flag acceptance (including partitioning, encryption, and LVM flags) without modifying real disks
+- Runs in a safe, isolated environment without performing destructive changes
 
 #### Test Modes
 
