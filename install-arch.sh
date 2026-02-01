@@ -117,9 +117,9 @@ if [ "$TEST_MODE" = true ]; then
   password_luks2="$password_luks1"
 else
   password_luks1=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password" 0 40) || exit 1
-  [ -z "$password_luks1" ] && echo "disk encryption password cannot be empty" && exit 1
   password_luks2=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password again" 0 40) || exit 1
 fi
+[ -z "$password_luks1" ] && echo "disk encryption password cannot be empty" && exit 1
 if [ "$password_luks1" != "$password_luks2" ]; then echo "Passwords did not match"; exit 1; fi
 
 # Video driver
