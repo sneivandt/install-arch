@@ -93,9 +93,9 @@ if [ "$TEST_MODE" = true ]; then
   password2="$password1"
 else
   password1=$(dialog --stdout --clear --insecure --passwordbox "Enter password" 0 40) || exit 1
-  [ -z "$password1" ] && echo "password cannot be empty" && exit 1
   password2=$(dialog --stdout --clear --insecure --passwordbox "Enter password again" 0 40) || exit 1
 fi
+[ -z "$password1" ] && echo "password cannot be empty" && exit 1
 if [ "$password1" != "$password2" ]; then echo "Passwords did not match"; exit 1; fi
 
 # Installation disk
