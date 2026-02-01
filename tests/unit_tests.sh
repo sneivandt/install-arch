@@ -160,13 +160,14 @@ test_script_executable() {
 # Future enhancement: Extract package list dynamically from install-arch.sh
 test_base_packages() {
   local base_packages=(
-    "base" "base-devel" "bat" "btop" "ctags" "curl" "dash" "dhcpcd" 
-    "docker" "duf" "efibootmgr" "eza" "fd" "fzf" "git" "git-delta" 
+    "base" "base-devel" "bat" "btop" "ctags" "curl" "dash" 
+    "docker" "duf" "efibootmgr" "eza" "fail2ban" "fd" "fzf" "git" "git-delta" 
     "grub" "jq" "lazygit" "linux" "linux-firmware" "linux-headers" 
-    "lvm2" "man-db" "man-pages" "neovim" "openssh" "pacman-contrib" 
-    "ripgrep" "sed" "shellcheck" "tmux" "vim" "wget" "xdg-user-dirs" 
-    "zip" "zoxide" "zsh" "zsh-autosuggestions" "zsh-completions" 
-    "zsh-syntax-highlighting"
+    "linux-lts" "linux-lts-headers" "lvm2" "man-db" "man-pages" 
+    "networkmanager" "neovim" "openssh" "pacman-contrib" "reflector" 
+    "ripgrep" "sed" "shellcheck" "tmux" "ufw" "util-linux" "vim" "wget" 
+    "xdg-user-dirs" "zip" "zoxide" "zsh" "zsh-autosuggestions" 
+    "zsh-completions" "zsh-syntax-highlighting"
   )
   
   local passed=0

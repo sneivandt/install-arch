@@ -230,6 +230,16 @@ else
   curl -sL 'https://www.archlinux.org/mirrorlist/?country=US&protocol=https&ip_version=4' | sed 's/^#Server/Server/' > /etc/pacman.d/mirrorlist
 fi
 
+# Detect CPU vendor for microcode updates
+cpu_vendor=""
+if [ "$DRY_RUN" = "false" ] && [ "$TEST_MODE" = "false" ]; then
+  if grep -q "GenuineIntel" /proc/cpuinfo; then
+    cpu_vendor="intel"
+  elif grep -q "AuthenticAMD" /proc/cpuinfo; then
+    cpu_vendor="amd"
+  fi
+fi
+
 # Base packages
 packages=(
   base \
@@ -239,11 +249,11 @@ packages=(
   ctags \
   curl \
   dash \
-  dhcpcd \
   docker \
   duf \
   efibootmgr \
   eza \
+  fail2ban \
   fd \
   fzf \
   git \
@@ -254,16 +264,22 @@ packages=(
   linux \
   linux-firmware \
   linux-headers \
+  linux-lts \
+  linux-lts-headers \
   lvm2 \
   man-db \
   man-pages \
+  networkmanager \
   neovim \
   openssh \
   pacman-contrib \
+  reflector \
   ripgrep \
   sed \
   shellcheck \
   tmux \
+  ufw \
+  util-linux \
   vim \
   wget \
   xdg-user-dirs \
@@ -314,6 +330,15 @@ packages_vbox=(
   virtualbox-guest-utils
 )
 
+# Add CPU microcode package if detected
+if [ -n "$cpu_vendor" ]; then
+  if [ "$cpu_vendor" = "intel" ]; then
+    packages=( "${packages[@]}" "intel-ucode" )
+  elif [ "$cpu_vendor" = "amd" ]; then
+    packages=( "${packages[@]}" "amd-ucode" )
+  fi
+fi
+
 # Select packages
 case "$mode" in
   2)
@@ -362,15 +387,19 @@ else
 fi
 run_cmd arch-chroot /mnt locale-gen
 
-# Google DNS (static resolv.conf; protected by chattr to prevent overwrite)
+# Configure DNS with systemd-resolved (modern, supports DNSSEC)
+# Note: NetworkManager will manage /etc/resolv.conf via systemd-resolved
 if [ "$DRY_RUN" = "true" ]; then
-  echo "[DRY-RUN] Would configure DNS resolvers"
+  echo "[DRY-RUN] Would configure systemd-resolved"
 else
-  cat >>/mnt/etc/resolv.conf <<'EOF'
-nameserver 8.8.8.8
-nameserver 8.8.4.4
+  # Create resolved configuration for Google DNS with DNSSEC
+  cat >>/mnt/etc/systemd/resolved.conf <<'EOF'
+[Resolve]
+DNS=8.8.8.8 8.8.4.4
+FallbackDNS=1.1.1.1 1.0.0.1
+DNSSEC=yes
+DNSOverTLS=opportunistic
 EOF
-  chattr +i /mnt/etc/resolv.conf
 fi
 
 # Initialize audio volume for GUI modes (store ALSA state)
@@ -384,8 +413,26 @@ esac
 # Set system time zone (adjust if deploying outside US/Pacific)
 run_cmd arch-chroot /mnt ln -sf /usr/share/zoneinfo/US/Pacific /etc/localtime
 
-# Enable DHCP client service
-run_cmd arch-chroot /mnt systemctl enable dhcpcd.service
+# Enable NetworkManager for network management (replaces dhcpcd)
+run_cmd arch-chroot /mnt systemctl enable NetworkManager.service
+
+# Enable systemd-resolved for DNS with DNSSEC support
+run_cmd arch-chroot /mnt systemctl enable systemd-resolved.service
+
+# Enable firewall for basic security hardening
+run_cmd arch-chroot /mnt systemctl enable ufw.service
+
+# Configure firewall: deny incoming by default, allow outgoing
+if [ "$DRY_RUN" = "true" ]; then
+  echo "[DRY-RUN] Would configure ufw firewall defaults"
+else
+  arch-chroot /mnt ufw --force enable
+  arch-chroot /mnt ufw default deny incoming
+  arch-chroot /mnt ufw default allow outgoing
+fi
+
+# Enable fail2ban for SSH brute-force protection
+run_cmd arch-chroot /mnt systemctl enable fail2ban.service
 
 # Enable Docker daemon
 run_cmd arch-chroot /mnt systemctl enable docker.service
@@ -395,6 +442,12 @@ run_cmd arch-chroot /mnt systemctl enable systemd-timesyncd.service
 
 # Enable pacman cache cleanup timer
 run_cmd arch-chroot /mnt systemctl enable paccache.timer
+
+# Enable periodic SSD TRIM for better SSD health and performance
+run_cmd arch-chroot /mnt systemctl enable fstrim.timer
+
+# Enable reflector timer for automatic mirrorlist updates
+run_cmd arch-chroot /mnt systemctl enable reflector.timer
 
 # Enable VirtualBox guest services (mode 3 only)
 if [ "$mode" -eq 3 ]; then
@@ -457,6 +510,109 @@ Description = Recompile xmonad
 When = PostTransaction
 Exec = /usr/bin/sudo XMONAD_CONFIG_DIR=/home/$user/.config/xmonad -u $user /usr/bin/xmonad --recompile
 Depends = xmonad
+EOF
+fi
+
+# }}}
+# Security Hardening ------------------------------------------------------ {{{
+#
+# Apply security-focused system hardening configurations
+
+# Create sysctl configuration for kernel hardening
+if [ "$DRY_RUN" = "true" ]; then
+  echo "[DRY-RUN] Would create security hardening sysctl configuration"
+else
+  cat >>/mnt/etc/sysctl.d/99-security.conf <<'EOF'
+# Kernel hardening settings for improved security
+
+# Prevent kernel pointer leaks
+kernel.kptr_restrict = 2
+
+# Restrict dmesg access to root only
+kernel.dmesg_restrict = 1
+
+# Restrict access to kernel logs
+kernel.printk = 3 3 3 3
+
+# Protect against SYN flood attacks
+net.ipv4.tcp_syncookies = 1
+
+# Disable IP forwarding (unless this machine is a router)
+net.ipv4.ip_forward = 0
+net.ipv6.conf.all.forwarding = 0
+
+# Disable ICMP redirect acceptance
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+
+# Disable secure ICMP redirect acceptance
+net.ipv4.conf.all.secure_redirects = 0
+net.ipv4.conf.default.secure_redirects = 0
+
+# Disable ICMP redirect sending
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+
+# Enable source address verification (anti-spoofing)
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+
+# Ignore ICMP ping requests (optional, uncomment to enable)
+# net.ipv4.icmp_echo_ignore_all = 1
+
+# Protect against time-wait assassination
+net.ipv4.tcp_rfc1337 = 1
+
+# Disable IPv6 router advertisements
+net.ipv6.conf.all.accept_ra = 0
+net.ipv6.conf.default.accept_ra = 0
+
+# Increase system file descriptor limit
+fs.file-max = 2097152
+
+# Restrict core dumps (potential information leak)
+kernel.core_uses_pid = 1
+fs.suid_dumpable = 0
+
+# Enable ASLR (Address Space Layout Randomization)
+kernel.randomize_va_space = 2
+EOF
+fi
+
+# Configure fail2ban for SSH protection
+if [ "$DRY_RUN" = "true" ]; then
+  echo "[DRY-RUN] Would configure fail2ban for SSH protection"
+else
+  cat >>/mnt/etc/fail2ban/jail.local <<'EOF'
+[DEFAULT]
+# Ban hosts for 1 hour (3600 seconds)
+bantime = 3600
+# Check for attacks within 10 minutes
+findtime = 600
+# Ban after 5 failed attempts
+maxretry = 5
+
+[sshd]
+enabled = true
+port = ssh
+filter = sshd
+logpath = /var/log/auth.log
+EOF
+fi
+
+# Configure reflector for automatic mirror updates
+if [ "$DRY_RUN" = "true" ]; then
+  echo "[DRY-RUN] Would configure reflector"
+else
+  cat >>/mnt/etc/xdg/reflector/reflector.conf <<'EOF'
+# Reflector configuration for automatic mirror updates
+--save /etc/pacman.d/mirrorlist
+--protocol https
+--country US
+--latest 20
+--sort rate
 EOF
 fi
 
@@ -537,7 +693,9 @@ if [ "$DRY_RUN" = "true" ]; then
 else
   sed -i "s/^HOOKS.*/HOOKS=(base udev autodetect keyboard keymap consolefont modconf block encrypt lvm2 filesystems fsck)/" /mnt/etc/mkinitcpio.conf
 fi
+# Build initramfs for both mainline and LTS kernels
 run_cmd arch-chroot /mnt mkinitcpio -p linux
+run_cmd arch-chroot /mnt mkinitcpio -p linux-lts
 
 # Install GRUB to EFI and patch kernel line with cryptdevice parameter
 run_cmd arch-chroot /mnt grub-install "$device" --efi-directory=/boot
