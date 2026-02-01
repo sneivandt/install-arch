@@ -6,7 +6,6 @@
   "files.eol": "\n",
   "files.insertFinalNewline": true,
   "files.trimTrailingWhitespace": true,
-  
   // Editor settings for shell scripts
   "[shellscript]": {
     "editor.tabSize": 2,
@@ -15,20 +14,9 @@
     "editor.formatOnSave": false,
     "editor.defaultFormatter": null
   },
-  
-  // Git settings
-  "git.enableSmartCommit": false,
-  "git.confirmSync": false,
-  
   // Search exclusions
   "search.exclude": {
     "**/*.log": true,
     "**/node_modules": true
   },
-  
-  // Files to watch
-  "files.watcherExclude": {
-    "**/*.log": true,
-    "**/tmp/**": true
-  }
 }

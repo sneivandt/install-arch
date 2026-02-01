@@ -71,7 +71,7 @@ Only highlighting the distinctive ones — the usual Arch base is assumed:
 * Window Manager: `xmonad`, `xmonad-contrib`
 * Terminal: `alacritty`, `rxvt-unicode`
 * Browser: `chromium`
-* Launcher: `rofi` 
+* Launcher: `rofi`
 * Compositor: `picom`
 * Screenshot: `flameshot`
 * Fonts: `adobe-source-code-pro-fonts`, `noto-fonts-cjk`, `noto-fonts-emoji`
@@ -119,11 +119,6 @@ This installation prioritizes security with multiple layers of protection:
 * **User isolation** - regular user account with sudo access via wheel group
 * **Modern encryption** - LUKS2 with strong defaults
 
-> **Note**: The immutable DNS configuration uses Google's public DNS servers (8.8.8.8, 8.8.4.4). To change DNS servers after installation:
-> 1. Remove immutable attribute: `chattr -i /etc/resolv.conf`
-> 2. Edit the file with your preferred DNS: `echo "nameserver 1.1.1.1" > /etc/resolv.conf`
-> 3. Optionally restore immutability: `chattr +i /etc/resolv.conf`
-
 ## Requirements
 
 * **Arch Linux live ISO** (UEFI target required)
@@ -145,12 +140,12 @@ This installation prioritizes security with multiple layers of protection:
 
 * **Small terminal → dialog truncation**: Enlarge window or use larger virtual console
 * **Time or key errors**: Ensure NTP active: `timedatectl set-ntp true`
-* **Package installation issues**: 
+* **Package installation issues**:
   - Check internet connection: `ping archlinux.org`
   - Verify mirror list: `cat /etc/pacman.d/mirrorlist`
   - Update keyring: `pacman -Sy archlinux-keyring`
 * **No NVIDIA prompt**: Device not detected (falls back to generic driver)
-* **Boot fails after installation**: 
+* **Boot fails after installation**:
   - Verify GRUB installation completed
   - Check BIOS/UEFI settings for boot order
   - Ensure LUKS password is correct
@@ -249,7 +244,7 @@ Contributions are welcome! Please:
 
 1. **Read the guidelines**: See [.github/copilot-instructions.md](.github/copilot-instructions.md) for detailed shell scripting guidelines and code standards
 2. **Fork and branch**: Create a feature branch from `main`
-3. **Follow conventions**: 
+3. **Follow conventions**:
    - Shell script best practices (quote variables, use set options)
    - ShellCheck must pass with no warnings
    - Follow existing code style
@@ -297,13 +292,3 @@ git push origin feature/my-feature
 
 # Open a pull request on GitHub
 ```
-
-## License
-
-See [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- Arch Linux community for excellent documentation
-- All contributors who have helped improve this script
-- Dialog utility for the interactive TUI interface
