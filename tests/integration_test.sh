@@ -15,8 +15,12 @@
 # - Actual partitioning on loop device
 # - Mock arch-chroot and pacstrap for complete simulation
 # - Verification of partition layout, LUKS, and LVM setup
+set -o errexit
 set -o nounset
 set -o pipefail
+
+# Trap errors with line number
+trap 'echo "Error on line $LINENO"' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEST_DISK_SIZE="12G"

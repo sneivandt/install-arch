@@ -481,7 +481,7 @@ run_cmd rm -f /mnt/etc/sudoers.d/aurbuilder
 # Create main user, apply dotfiles, lock root, adjust sudo policy
 
 # Create user (groups: docker,wheel) with hashed password and zsh shell
-run_cmd arch-chroot /mnt useradd -mU -G docker,wheel -s /bin/zsh -p "$(openssl passwd -1 "$password1")" "$user"
+run_cmd arch-chroot /mnt useradd -mU -G docker,wheel -s /bin/zsh -p "$(openssl passwd -6 "$password1")" "$user"
 run_cmd arch-chroot /mnt chsh -s /bin/zsh "$user"
 
 # Temporarily allow passwordless sudo for bootstrapping
