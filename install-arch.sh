@@ -372,14 +372,14 @@ sed -i '/^# %wheel ALL=(ALL) NOPASSWD: ALL$/s/^# //g' /mnt/etc/sudoers
 arch-chroot /mnt passwd -l root
 arch-chroot /mnt usermod -s /sbin/nologin root
 
-# Clone dotfiles repo and run installer (mode controls flags)
+# Clone dotfiles repo and run installer (mode controls profile)
 arch-chroot /mnt su "$user" -c "git clone https://github.com/sneivandt/dotfiles.git /home/$user/src/dotfiles"
 case "$mode" in
   1)
-    arch-chroot /mnt su "$user" -c "/home/$user/src/dotfiles/dotfiles.sh -Ip"
+    arch-chroot /mnt su "$user" -c "/home/$user/src/dotfiles/dotfiles.sh -I --profile arch"
     ;;
   2|3)
-    arch-chroot /mnt su "$user" -c "/home/$user/src/dotfiles/dotfiles.sh -Ipg"
+    arch-chroot /mnt su "$user" -c "/home/$user/src/dotfiles/dotfiles.sh -I --profile arch-desktop"
     ;;
 esac
 

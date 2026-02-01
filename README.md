@@ -2,6 +2,8 @@
 
 Automated, opinionated provisioning of an [Arch Linux](https://archlinux.org) system with encrypted LVM, user creation, dotfiles, and optional desktop packages — driven by a single interactive script: `install-arch.sh`.
 
+[![CI](https://github.com/sneivandt/install-arch/actions/workflows/ci.yml/badge.svg)](https://github.com/sneivandt/install-arch/actions/workflows/ci.yml)
+
 ## Quick Start 🔧
 
 Boot the Arch Linux live ISO, bring up networking, then:
@@ -57,8 +59,10 @@ GRUB passes `cryptdevice=<partition>:volgroup0` to unlock at boot.
 ## Dotfiles 🎨
 
 Integrates with [sneivandt/dotfiles](https://github.com/sneivandt/dotfiles):
-* Minimal: `dotfiles.sh -Ip`
-* Workstation / VirtualBox: `dotfiles.sh -Ipg`
+* Minimal: `dotfiles.sh -I --profile arch`
+* Workstation / VirtualBox: `dotfiles.sh -I --profile arch-desktop`
+
+The dotfiles repository provides profile-based configuration for shell environments (zsh, bash), editors (neovim, VS Code), window managers (xmonad), and more.
 
 ## Customize ✏️
 
@@ -88,3 +92,25 @@ Consider editing before running:
 * Time or key errors → ensure NTP active (`timedatectl set-ntp true`)
 * AUR build hiccups → retry inside installed system
 * No NVIDIA prompt → device not detected (falls back to generic driver)
+
+## Development 🧪
+
+### CI/CD
+
+This repository uses GitHub Actions for continuous integration:
+* **ShellCheck Analysis**: Validates shell script quality and catches common errors
+* **Arch Linux Testing**: Verifies script runs in an Arch Linux container
+* **Syntax Validation**: Ensures script has no syntax errors
+
+Run checks locally:
+```bash
+# Check script syntax
+bash -n install-arch.sh
+
+# Run shellcheck (requires shellcheck package)
+shellcheck install-arch.sh
+```
+
+### Contributing
+
+See [.github/copilot-instructions.md](.github/copilot-instructions.md) for detailed shell scripting guidelines and code standards used in this project.
