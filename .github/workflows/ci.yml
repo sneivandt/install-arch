@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Run ShellCheck
         uses: ludeeus/action-shellcheck@master
         with:
@@ -27,20 +27,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Make test scripts executable
-        run: chmod +x tests/*.sh
-      
+        run: chmod +x test/*.sh
+
       - name: Run unit tests
-        run: ./tests/unit_tests.sh
-      
+        run: ./test/unit_tests.sh
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: unit-test-results
           path: |
-            tests/*.log
+            test/*.log
           retention-days: 7
 
   integration-test:
@@ -52,19 +52,19 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Update system and install dependencies
         run: |
           pacman -Syu --noconfirm
           pacman -S --noconfirm shellcheck dialog git curl lvm2 cryptsetup \
             parted e2fsprogs dosfstools util-linux
-      
+
       - name: Make scripts executable
-        run: chmod +x tests/*.sh install-arch.sh
-      
+        run: chmod +x test/*.sh install-arch.sh
+
       - name: Run integration test
-        run: ./tests/integration_test.sh
-      
+        run: ./test/integration_test.sh
+
       - name: Upload integration test logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -82,23 +82,23 @@ jobs:
       image: archlinux:latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Update system and install dependencies
         run: |
           pacman -Syu --noconfirm
           pacman -S --noconfirm shellcheck dialog git curl lvm2 cryptsetup parted
-      
+
       - name: Run shellcheck on install-arch.sh
         run: shellcheck install-arch.sh
-      
+
       - name: Verify script syntax
         run: bash -n install-arch.sh
-      
+
       - name: Check for required commands
         run: |
           echo "Checking for required commands in script..."
           grep -E 'pacman|dialog|fdisk|cryptsetup|lvcreate|arch-chroot' install-arch.sh
-      
+
       - name: Verify file permissions
         run: |
           if [ ! -x install-arch.sh ]; then
@@ -106,12 +106,12 @@ jobs:
             exit 1
           fi
           echo "install-arch.sh is executable"
-      
+
       - name: Test help/usage patterns
         run: |
           # Verify the script doesn't error on basic invocations (it will fail on dialog, which is expected)
           bash -n install-arch.sh && echo "Script syntax is valid"
-      
+
       - name: Test --dry-run and --test-mode flags
         run: |
           echo "Testing command line arguments..."

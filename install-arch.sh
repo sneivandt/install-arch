@@ -314,10 +314,10 @@ packages=(
 
 # Workstation packages
 packages_gui=(
-  adobe-source-code-pro-fonts \
   alacritty \
   alsa-utils \
   chromium \
+  code \
   dunst \
   feh \
   flameshot \
@@ -328,6 +328,7 @@ packages_gui=(
   redshift \
   rofi \
   rxvt-unicode \
+  ttf-sourcecodepro-nerd \
   urxvt-perls \
   xclip \
   xmonad \
