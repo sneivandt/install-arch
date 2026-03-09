@@ -705,9 +705,12 @@ case "$mode" in
     dotfiles_profile="desktop"
     ;;
 esac
+echo "Preparing dotfiles bootstrap directory for $user"
 run_cmd arch-chroot /mnt install -d -o "$user" -g "$user" "/home/$user/src"
-run_cmd arch-chroot /mnt su "$user" -c "git clone $dotfiles_repo $dotfiles_dir"
-run_cmd arch-chroot /mnt su "$user" -c "$dotfiles_dir/dotfiles.sh install -p $dotfiles_profile"
+echo "Cloning dotfiles repository for $user"
+run_cmd arch-chroot /mnt runuser -u "$user" -- git clone "$dotfiles_repo" "$dotfiles_dir"
+echo "Applying dotfiles profile '$dotfiles_profile' for $user"
+run_cmd arch-chroot /mnt runuser -u "$user" -- "$dotfiles_dir/dotfiles.sh" install -p "$dotfiles_profile"
 
 # Reinstate sudo password requirement
 if [ "$DRY_RUN" = "true" ]; then

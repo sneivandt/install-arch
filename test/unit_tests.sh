@@ -253,26 +253,39 @@ run_script_dry_run() {
 # Test 16: Dotfiles bootstrap uses current base profile flow
 test_dotfiles_bootstrap_minimal() {
   local output
-  output=$(run_script_dry_run "1")
+  local parent_dir_line
+  local runuser_line_prefix
+  local base_profile_fragment
 
-  assert_contains "$output" \
-    "[DRY-RUN] Would execute: arch-chroot /mnt install -d -o testuser -g testuser /home/testuser/src" \
+  output=$(run_script_dry_run "1")
+  parent_dir_line="[DRY-RUN] Would execute: arch-chroot /mnt install -d -o testuser -g testuser /home/testuser/src"
+  runuser_line_prefix="[DRY-RUN] Would execute: arch-chroot /mnt runuser -u testuser --"
+  base_profile_fragment="/home/testuser/src/dotfiles/dotfiles.sh install -p base"
+
+  assert_contains "$output" "$parent_dir_line" \
     "Dotfiles bootstrap creates parent directory"
-  assert_contains "$output" \
-    "[DRY-RUN] Would execute: arch-chroot /mnt su testuser -c git\\ clone\\ https://github.com/sneivandt/dotfiles.git\\ /home/testuser/src/dotfiles" \
-    "Dotfiles bootstrap clones the current repo"
-  assert_contains "$output" \
-    "[DRY-RUN] Would execute: arch-chroot /mnt su testuser -c /home/testuser/src/dotfiles/dotfiles.sh\\ install\\ -p\\ base" \
+  assert_contains "$output" "$runuser_line_prefix" \
+    "Dotfiles bootstrap runs commands as the target user"
+  assert_contains "$output" "https://github.com/sneivandt/dotfiles.git" \
+    "Dotfiles bootstrap uses the current repo URL"
+  assert_contains "$output" "git clone" "Dotfiles bootstrap invokes git clone"
+  assert_contains "$output" "/home/testuser/src/dotfiles" \
+    "Dotfiles bootstrap clones into the user's src directory"
+  assert_occurs_before "$output" "$parent_dir_line" "https://github.com/sneivandt/dotfiles.git" \
+    "Dotfiles parent directory is created before cloning"
+  assert_contains "$output" "$base_profile_fragment" \
     "Minimal mode uses the base dotfiles profile"
 }
 
 # Test 17: Dotfiles bootstrap uses current desktop profile flow
 test_dotfiles_bootstrap_desktop() {
   local output
-  output=$(run_script_dry_run "2")
+  local desktop_profile_fragment
 
-  assert_contains "$output" \
-    "[DRY-RUN] Would execute: arch-chroot /mnt su testuser -c /home/testuser/src/dotfiles/dotfiles.sh\\ install\\ -p\\ desktop" \
+  output=$(run_script_dry_run "2")
+  desktop_profile_fragment="/home/testuser/src/dotfiles/dotfiles.sh install -p desktop"
+
+  assert_contains "$output" "$desktop_profile_fragment" \
     "Desktop mode uses the desktop dotfiles profile"
 }
 
