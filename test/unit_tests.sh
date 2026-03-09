@@ -5,7 +5,7 @@ set -o pipefail
 
 # Load test helpers
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=tests/test_helpers.sh
+# shellcheck source=test/test_helpers.sh
 source "$SCRIPT_DIR/test_helpers.sh"
 
 echo "========================================"
@@ -237,6 +237,58 @@ test_shebang() {
   fi
 }
 
+run_script_dry_run() {
+  local mode="$1"
+  local script_path="$SCRIPT_DIR/../install-arch.sh"
+
+  TEST_MODE_MODE="$mode" \
+  TEST_MODE_HOSTNAME="testhost" \
+  TEST_MODE_USER="testuser" \
+  TEST_MODE_PASSWORD="testpass" \
+  TEST_MODE_DEVICE="/dev/loop0" \
+  TEST_MODE_LUKS_PASSWORD="lukspass" \
+    "$script_path" --test-mode --dry-run 2>&1
+}
+
+# Test 16: Dotfiles bootstrap uses current base profile flow
+test_dotfiles_bootstrap_minimal() {
+  local output
+  local parent_dir_line
+  local runuser_line_prefix
+  local base_profile_fragment
+
+  output=$(run_script_dry_run "1")
+  parent_dir_line="[DRY-RUN] Would execute: arch-chroot /mnt install -d -o testuser -g testuser /home/testuser/src"
+  runuser_line_prefix="[DRY-RUN] Would execute: arch-chroot /mnt runuser -u testuser --"
+  base_profile_fragment="/home/testuser/src/dotfiles/dotfiles.sh install -p base"
+
+  assert_contains "$output" "$parent_dir_line" \
+    "Dotfiles bootstrap creates parent directory"
+  assert_contains "$output" "$runuser_line_prefix" \
+    "Dotfiles bootstrap runs commands as the target user"
+  assert_contains "$output" "https://github.com/sneivandt/dotfiles.git" \
+    "Dotfiles bootstrap uses the current repo URL"
+  assert_contains "$output" "git clone" "Dotfiles bootstrap invokes git clone"
+  assert_contains "$output" "/home/testuser/src/dotfiles" \
+    "Dotfiles bootstrap clones into the user's src directory"
+  assert_occurs_before "$output" "$parent_dir_line" "https://github.com/sneivandt/dotfiles.git" \
+    "Dotfiles parent directory is created before cloning"
+  assert_contains "$output" "$base_profile_fragment" \
+    "Minimal mode uses the base dotfiles profile"
+}
+
+# Test 17: Dotfiles bootstrap uses current desktop profile flow
+test_dotfiles_bootstrap_desktop() {
+  local output
+  local desktop_profile_fragment
+
+  output=$(run_script_dry_run "2")
+  desktop_profile_fragment="/home/testuser/src/dotfiles/dotfiles.sh install -p desktop"
+
+  assert_contains "$output" "$desktop_profile_fragment" \
+    "Desktop mode uses the desktop dotfiles profile"
+}
+
 # Run all tests
 test_device_prefix_nvme
 test_device_prefix_sata
@@ -253,6 +305,8 @@ test_base_packages
 test_gui_packages
 test_test_mode_vars
 test_shebang
+test_dotfiles_bootstrap_minimal
+test_dotfiles_bootstrap_desktop
 
 # Print summary and exit with appropriate code
 echo ""

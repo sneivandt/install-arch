@@ -695,15 +695,22 @@ run_cmd arch-chroot /mnt passwd -l root
 run_cmd arch-chroot /mnt usermod -s /sbin/nologin root
 
 # Clone dotfiles repo and run installer (mode controls profile)
-run_cmd arch-chroot /mnt su "$user" -c "git clone https://github.com/sneivandt/dotfiles.git /home/$user/src/dotfiles"
+dotfiles_repo="https://github.com/sneivandt/dotfiles.git"
+dotfiles_dir="/home/$user/src/dotfiles"
 case "$mode" in
   1)
-    run_cmd arch-chroot /mnt su "$user" -c "/home/$user/src/dotfiles/dotfiles.sh -I --profile arch"
+    dotfiles_profile="base"
     ;;
   2|3)
-    run_cmd arch-chroot /mnt su "$user" -c "/home/$user/src/dotfiles/dotfiles.sh -I --profile arch-desktop"
+    dotfiles_profile="desktop"
     ;;
 esac
+echo "Preparing dotfiles bootstrap directory for $user"
+run_cmd arch-chroot /mnt install -d -o "$user" -g "$user" "/home/$user/src"
+echo "Cloning dotfiles repository for $user"
+run_cmd arch-chroot /mnt runuser -u "$user" -- git clone "$dotfiles_repo" "$dotfiles_dir"
+echo "Applying dotfiles profile '$dotfiles_profile' for $user"
+run_cmd arch-chroot /mnt runuser -u "$user" -- "$dotfiles_dir/dotfiles.sh" install -p "$dotfiles_profile"
 
 # Reinstate sudo password requirement
 if [ "$DRY_RUN" = "true" ]; then

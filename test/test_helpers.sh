@@ -87,11 +87,32 @@ assert_contains() {
   local test_name="$3"
   
   test_start "$test_name"
-  if echo "$haystack" | grep -q "$needle"; then
+  if grep -F -q -- "$needle" <<< "$haystack"; then
     test_pass "$test_name"
     return 0
   else
-    test_fail "$test_name" "String '$haystack' does not contain '$needle'"
+    test_fail "$test_name" "String does not contain '$needle'"
+    return 1
+  fi
+}
+
+assert_occurs_before() {
+  local haystack="$1"
+  local first="$2"
+  local second="$3"
+  local test_name="$4"
+  local first_line
+  local second_line
+
+  test_start "$test_name"
+  first_line=$(grep -F -n -- "$first" <<< "$haystack" | head -n 1 | cut -d: -f1 || true)
+  second_line=$(grep -F -n -- "$second" <<< "$haystack" | head -n 1 | cut -d: -f1 || true)
+
+  if [ -n "$first_line" ] && [ -n "$second_line" ] && [ "$first_line" -lt "$second_line" ]; then
+    test_pass "$test_name"
+    return 0
+  else
+    test_fail "$test_name" "Expected '$first' to appear before '$second'"
     return 1
   fi
 }
