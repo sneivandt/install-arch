@@ -108,10 +108,10 @@ GRUB passes `cryptdevice=<partition>:volgroup0` to unlock at boot.
 ## Dotfiles Integration
 
 Integrates with [sneivandt/dotfiles](https://github.com/sneivandt/dotfiles):
-* Minimal: `dotfiles.sh -I --profile arch`
-* Workstation / VirtualBox: `dotfiles.sh -I --profile arch-desktop`
+* Minimal: `dotfiles.sh install -p base`
+* Workstation / VirtualBox: `dotfiles.sh install -p desktop`
 
-The dotfiles repository provides profile-based configuration for shell environments (zsh, bash), editors (neovim, VS Code), window managers (xmonad), and more. This separation allows you to maintain your personal configurations separately from the installation script.
+The dotfiles repository now bootstraps its managed binary from GitHub Releases and auto-detects the Arch platform internally. This installer clones the repository into the user's home directory, then applies the `base` or `desktop` profile to provision shell environments (zsh, bash), editors (neovim, VS Code), window managers (xmonad), and more.
 
 ## Customization
 

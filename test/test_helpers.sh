@@ -87,7 +87,7 @@ assert_contains() {
   local test_name="$3"
   
   test_start "$test_name"
-  if echo "$haystack" | grep -q "$needle"; then
+  if echo "$haystack" | grep -F -q -- "$needle"; then
     test_pass "$test_name"
     return 0
   else

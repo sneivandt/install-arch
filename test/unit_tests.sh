@@ -5,7 +5,7 @@ set -o pipefail
 
 # Load test helpers
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=tests/test_helpers.sh
+# shellcheck source=test/test_helpers.sh
 source "$SCRIPT_DIR/test_helpers.sh"
 
 echo "========================================"
@@ -237,6 +237,45 @@ test_shebang() {
   fi
 }
 
+run_script_dry_run() {
+  local mode="$1"
+  local script_path="$SCRIPT_DIR/../install-arch.sh"
+
+  TEST_MODE_MODE="$mode" \
+  TEST_MODE_HOSTNAME="testhost" \
+  TEST_MODE_USER="testuser" \
+  TEST_MODE_PASSWORD="testpass" \
+  TEST_MODE_DEVICE="/dev/loop0" \
+  TEST_MODE_LUKS_PASSWORD="lukspass" \
+    "$script_path" --test-mode --dry-run 2>&1
+}
+
+# Test 16: Dotfiles bootstrap uses current base profile flow
+test_dotfiles_bootstrap_minimal() {
+  local output
+  output=$(run_script_dry_run "1")
+
+  assert_contains "$output" \
+    "[DRY-RUN] Would execute: arch-chroot /mnt install -d -o testuser -g testuser /home/testuser/src" \
+    "Dotfiles bootstrap creates parent directory"
+  assert_contains "$output" \
+    "[DRY-RUN] Would execute: arch-chroot /mnt su testuser -c git\\ clone\\ https://github.com/sneivandt/dotfiles.git\\ /home/testuser/src/dotfiles" \
+    "Dotfiles bootstrap clones the current repo"
+  assert_contains "$output" \
+    "[DRY-RUN] Would execute: arch-chroot /mnt su testuser -c /home/testuser/src/dotfiles/dotfiles.sh\\ install\\ -p\\ base" \
+    "Minimal mode uses the base dotfiles profile"
+}
+
+# Test 17: Dotfiles bootstrap uses current desktop profile flow
+test_dotfiles_bootstrap_desktop() {
+  local output
+  output=$(run_script_dry_run "2")
+
+  assert_contains "$output" \
+    "[DRY-RUN] Would execute: arch-chroot /mnt su testuser -c /home/testuser/src/dotfiles/dotfiles.sh\\ install\\ -p\\ desktop" \
+    "Desktop mode uses the desktop dotfiles profile"
+}
+
 # Run all tests
 test_device_prefix_nvme
 test_device_prefix_sata
@@ -253,6 +292,8 @@ test_base_packages
 test_gui_packages
 test_test_mode_vars
 test_shebang
+test_dotfiles_bootstrap_minimal
+test_dotfiles_bootstrap_desktop
 
 # Print summary and exit with appropriate code
 echo ""
