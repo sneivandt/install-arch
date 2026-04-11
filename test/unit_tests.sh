@@ -35,7 +35,7 @@ test_partition_naming_nvme() {
   local result
   result=$(get_partition_name "$device" "1")
   assert_equals "/dev/nvme0n1p1" "$result" "NVMe partition 1 naming"
-  
+
   result=$(get_partition_name "$device" "2")
   assert_equals "/dev/nvme0n1p2" "$result" "NVMe partition 2 naming"
 }
@@ -46,7 +46,7 @@ test_partition_naming_sata() {
   local result
   result=$(get_partition_name "$device" "1")
   assert_equals "/dev/sda1" "$result" "SATA partition 1 naming"
-  
+
   result=$(get_partition_name "$device" "2")
   assert_equals "/dev/sda2" "$result" "SATA partition 2 naming"
 }
@@ -56,13 +56,13 @@ test_hostname_validation_valid() {
   local hostnames=("myhost" "test-host" "host123" "h" "a1b2c3")
   local passed=0
   local total=${#hostnames[@]}
-  
+
   for hostname in "${hostnames[@]}"; do
     if validate_hostname "$hostname"; then
       ((passed++))
     fi
   done
-  
+
   assert_equals "$total" "$passed" "All valid hostnames should pass validation"
 }
 
@@ -71,13 +71,13 @@ test_hostname_validation_invalid() {
   local hostnames=("-startwithhyphen" "endwithhyphen-" "has space" "has_underscore" "")
   local failed=0
   local total=${#hostnames[@]}
-  
+
   for hostname in "${hostnames[@]}"; do
     if ! validate_hostname "$hostname"; then
       ((failed++))
     fi
   done
-  
+
   assert_equals "$total" "$failed" "All invalid hostnames should fail validation"
 }
 
@@ -86,13 +86,13 @@ test_username_validation_valid() {
   local usernames=("user" "test_user" "user123" "a" "test-user")
   local passed=0
   local total=${#usernames[@]}
-  
+
   for username in "${usernames[@]}"; do
     if validate_username "$username"; then
       ((passed++))
     fi
   done
-  
+
   assert_equals "$total" "$passed" "All valid usernames should pass validation"
 }
 
@@ -101,13 +101,13 @@ test_username_validation_invalid() {
   local usernames=("User" "123user" "-user" "user space" "")
   local failed=0
   local total=${#usernames[@]}
-  
+
   for username in "${usernames[@]}"; do
     if ! validate_username "$username"; then
       ((failed++))
     fi
   done
-  
+
   assert_equals "$total" "$failed" "All invalid usernames should fail validation"
 }
 
@@ -115,7 +115,7 @@ test_username_validation_invalid() {
 test_package_validation() {
   local valid_packages=("base" "linux" "grub" "linux-firmware" "base-devel" "xorg-server")
   local invalid_packages=("" "-invalid" "has space" "has/slash")
-  
+
   local valid_passed=0
   for pkg in "${valid_packages[@]}"; do
     if validate_package_name "$pkg"; then
@@ -123,7 +123,7 @@ test_package_validation() {
     fi
   done
   assert_equals "${#valid_packages[@]}" "$valid_passed" "Valid package names should pass"
-  
+
   local invalid_failed=0
   for pkg in "${invalid_packages[@]}"; do
     if ! validate_package_name "$pkg"; then
@@ -160,23 +160,23 @@ test_script_executable() {
 # Future enhancement: Extract package list dynamically from install-arch.sh
 test_base_packages() {
   local base_packages=(
-    "base" "base-devel" "bat" "btop" "ctags" "curl" "dash" 
-    "docker" "duf" "efibootmgr" "eza" "fail2ban" "fd" "fzf" "git" "git-delta" 
-    "grub" "jq" "lazygit" "linux" "linux-firmware" "linux-headers" 
-    "linux-lts" "linux-lts-headers" "lvm2" "man-db" "man-pages" 
-    "networkmanager" "neovim" "openssh" "pacman-contrib" "reflector" 
-    "ripgrep" "sed" "shellcheck" "tmux" "ufw" "util-linux" "vim" "wget" 
-    "xdg-user-dirs" "zip" "zoxide" "zsh" "zsh-autosuggestions" 
+    "base" "base-devel" "bat" "btop" "ctags" "curl" "dash"
+    "docker" "duf" "efibootmgr" "eza" "fail2ban" "fd" "fzf" "git" "git-delta"
+    "grub" "jq" "lazygit" "linux" "linux-firmware" "linux-headers"
+    "linux-lts" "linux-lts-headers" "lvm2" "man-db" "man-pages"
+    "networkmanager" "neovim" "openssh" "pacman-contrib" "reflector"
+    "ripgrep" "sed" "shellcheck" "tmux" "ufw" "util-linux" "vim" "wget"
+    "xdg-user-dirs" "zip" "zoxide" "zsh" "zsh-autosuggestions"
     "zsh-completions" "zsh-syntax-highlighting"
   )
-  
+
   local passed=0
   for pkg in "${base_packages[@]}"; do
     if validate_package_name "$pkg"; then
       ((passed++))
     fi
   done
-  
+
   assert_equals "${#base_packages[@]}" "$passed" "All base packages have valid names"
 }
 
@@ -186,20 +186,20 @@ test_base_packages() {
 # Future enhancement: Extract package list dynamically from install-arch.sh
 test_gui_packages() {
   local gui_packages=(
-    "adobe-source-code-pro-fonts" "alacritty" "alsa-utils" "chromium" 
-    "dunst" "feh" "flameshot" "noto-fonts-cjk" "noto-fonts-emoji" 
-    "papirus-icon-theme" "picom" "redshift" "rofi" "rxvt-unicode" 
-    "urxvt-perls" "xclip" "xmonad" "xmonad-contrib" "xorg" 
-    "xorg-server" "xorg-xinit" "xterm"
+    "alacritty" "alsa-utils" "chromium" "gammastep" "grim"
+    "hyprland" "hypridle" "hyprlock" "hyprpaper" "mako"
+    "otf-font-awesome" "papirus-icon-theme" "playerctl"
+    "qt5-wayland" "qt6-wayland" "slurp" "uwsm" "waybar"
+    "wl-clipboard" "wofi" "xorg-xwayland"
   )
-  
+
   local passed=0
   for pkg in "${gui_packages[@]}"; do
     if validate_package_name "$pkg"; then
       ((passed++))
     fi
   done
-  
+
   assert_equals "${#gui_packages[@]}" "$passed" "All GUI packages have valid names"
 }
 
@@ -212,14 +212,14 @@ test_test_mode_vars() {
   export TEST_MODE_PASSWORD="testpass"
   export TEST_MODE_DEVICE="/dev/loop0"
   export TEST_MODE_LUKS_PASSWORD="lukspass"
-  
+
   assert_not_empty "$TEST_MODE_MODE" "TEST_MODE_MODE should be set"
   assert_not_empty "$TEST_MODE_HOSTNAME" "TEST_MODE_HOSTNAME should be set"
   assert_not_empty "$TEST_MODE_USER" "TEST_MODE_USER should be set"
   assert_not_empty "$TEST_MODE_PASSWORD" "TEST_MODE_PASSWORD should be set"
   assert_not_empty "$TEST_MODE_DEVICE" "TEST_MODE_DEVICE should be set"
   assert_not_empty "$TEST_MODE_LUKS_PASSWORD" "TEST_MODE_LUKS_PASSWORD should be set"
-  
+
   # Clean up
   unset TEST_MODE_MODE TEST_MODE_HOSTNAME TEST_MODE_USER TEST_MODE_PASSWORD
   unset TEST_MODE_DEVICE TEST_MODE_LUKS_PASSWORD

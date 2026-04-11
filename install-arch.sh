@@ -9,7 +9,7 @@
 # WARNING: Destroys selected disk contents completely.
 # Modes:
 #   1 Minimal (CLI only)
-#   2 Workstation (X11 + WM + optional NVIDIA)
+#   2 Workstation (Wayland + Hyprland + optional NVIDIA)
 #   3 VirtualBox Workstation (adds guest utils)
 # Logging starts only after password collection.
 set -o errexit
@@ -156,17 +156,13 @@ if [ "$mode" -eq 2 ] || [ "$mode" -eq 3 ]; then
   if [ "$TEST_MODE" = "true" ]; then
     video_driver="${TEST_MODE_VIDEO_DRIVER:-}"
   elif lspci | grep -e VGA -e 3D | grep -q NVIDIA; then
-    video_drivers=(0 nvidia 1 nvidia-340xx 2 nvidia-390xx 3 xf86-video-nouveau)
-    # shellcheck disable=SC2068
-    driver_index=$(dialog --stdout --clear --menu "Select video driver" 0 0 0 ${video_drivers[@]}) || exit 1
-    # Dialog returns the tag (0, 1, 2, 3), we need to get the value at index (tag * 2 + 1)
-    # But we need to convert tag to the actual driver name
-    case "$driver_index" in
-      0) video_driver="nvidia" ;;
-      1) video_driver="nvidia-340xx" ;;
-      2) video_driver="nvidia-390xx" ;;
-      3) video_driver="xf86-video-nouveau" ;;
-    esac
+    video_driver=$(dialog --stdout --clear --menu "NVIDIA GPU detected. Select driver" 0 0 0 \
+      "nvidia-open" "Open kernel modules (Turing+, recommended)" \
+      "nvidia" "Proprietary (pre-Turing GPUs)" \
+      "none" "Skip (use nouveau/mesa)") || exit 1
+    if [ "$video_driver" = "none" ]; then
+      video_driver=""
+    fi
   fi
 fi
 
@@ -312,39 +308,34 @@ packages=(
   zsh-syntax-highlighting
 )
 
-# Workstation packages
+# Workstation packages (Wayland + Hyprland desktop)
 packages_gui=(
   alacritty \
   alsa-utils \
   chromium \
-  code \
-  dunst \
-  feh \
-  flameshot \
-  noto-fonts-cjk \
-  noto-fonts-emoji \
+  gammastep \
+  grim \
+  hyprland \
+  hypridle \
+  hyprlock \
+  hyprpaper \
+  mako \
+  otf-font-awesome \
   papirus-icon-theme \
-  picom \
-  redshift \
-  rofi \
-  rxvt-unicode \
-  ttf-sourcecodepro-nerd \
-  urxvt-perls \
-  xclip \
-  xmonad \
-  xmonad-contrib \
-  xorg \
-  xorg-server \
-  xorg-xinit \
-  xterm
+  playerctl \
+  qt5-wayland \
+  qt6-wayland \
+  slurp \
+  uwsm \
+  waybar \
+  wl-clipboard \
+  wofi \
+  xorg-xwayland
 )
 
-# Video drivers
-if [ -n "$video_driver" ]
-then
+# Add NVIDIA driver if selected (Wayland uses mesa/nouveau by default)
+if [ -n "$video_driver" ]; then
   packages_gui=( "${packages_gui[@]}" "$video_driver" )
-else
-  packages_gui=( "${packages_gui[@]}" "xf86-video-vesa" )
 fi
 
 # Virtualbox packages
@@ -518,19 +509,7 @@ Exec = /usr/bin/paccache -rk5
 Depends = pacman-contrib
 EOF
 
-# Hook to auto recompile xmonad after install/upgrade
-cat >>/mnt/etc/pacman.d/hooks/xmonad.hook <<EOF
-[Trigger]
-Type = Package
-Operation = Install
-Operation = Upgrade
-Target = xmonad
-[Action]
-Description = Recompile xmonad
-When = PostTransaction
-Exec = /usr/bin/sudo XMONAD_CONFIG_DIR=/home/$user/.config/xmonad -u $user /usr/bin/xmonad --recompile
-Depends = xmonad
-EOF
+
 fi
 
 # }}}

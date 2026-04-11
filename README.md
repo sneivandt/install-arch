@@ -21,12 +21,12 @@ Interactive prompts (via `dialog`) cover: mode, hostname, user/password, disk en
 | Mode | Purpose | Extras |
 |------|---------|--------|
 | Minimal (1) | Fast CLI workstation base | Core tooling + modern CLI utilities |
-| Workstation (2) | Lightweight X11 + tiling WM | Desktop + optional NVIDIA + paru AUR helper |
+| Workstation (2) | Wayland + Hyprland tiling compositor | Desktop + optional NVIDIA + paru AUR helper |
 | VirtualBox (3) | Workstation for VM guests | Adds guest integrations |
 
 **Minimal mode** provides a lean, fast command-line system perfect for servers, development machines, or users who prefer terminal-based workflows.
 
-**Workstation mode** adds a complete desktop environment with XMonad tiling window manager, perfect for power users who want efficiency and customization.
+**Workstation mode** adds a Wayland desktop with the Hyprland tiling compositor, perfect for power users who want efficiency and customization.
 
 **VirtualBox mode** is identical to Workstation but includes VirtualBox Guest Additions for seamless VM integration.
 
@@ -44,7 +44,7 @@ Interactive prompts (via `dialog`) cover: mode, hostname, user/password, disk en
 10. Enable core services: NetworkManager, firewall (UFW), fail2ban, Docker, timesyncd, fstrim, reflector
 11. Configure firewall defaults and fail2ban rules
 12. Apply kernel hardening via sysctl parameters
-13. Pacman candy + hooks (dash, cache clean, xmonad auto‑recompile)
+13. Pacman candy + hooks (dash, cache clean)
 14. Install paru AUR helper (for user package management)
 15. Create user (zsh, wheel, docker); fetch dotfiles & bootstrap
 16. Initramfs + GRUB (for both linux and linux-lts kernels)
@@ -82,13 +82,21 @@ Only highlighting the distinctive ones — the usual Arch base is assumed:
 * `duf` - modern df
 
 **Desktop (Workstation modes):**
-* Window Manager: `xmonad`, `xmonad-contrib`
-* Terminal: `alacritty`, `rxvt-unicode`
+* Compositor: `hyprland` (Wayland tiling compositor)
+* Session: `uwsm` (Universal Wayland Session Manager)
+* Terminal: `alacritty`
 * Browser: `chromium`
-* Launcher: `rofi`
-* Compositor: `picom`
-* Screenshot: `flameshot`
-* Fonts: `adobe-source-code-pro-fonts`, `noto-fonts-cjk`, `noto-fonts-emoji`
+* Status bar: `waybar`
+* Launcher: `wofi`
+* Notifications: `mako`
+* Wallpaper: `hyprpaper`
+* Screen lock: `hyprlock`, `hypridle`
+* Screenshot: `grim`, `slurp`
+* Night light: `gammastep`
+* Media: `playerctl`
+* Clipboard: `wl-clipboard`
+* Wayland compat: `qt5-wayland`, `qt6-wayland`, `xorg-xwayland`
+* Fonts: `otf-font-awesome`
 * Theme: `papirus-icon-theme`
 
 **AUR Helper:**
@@ -111,7 +119,7 @@ Integrates with [sneivandt/dotfiles](https://github.com/sneivandt/dotfiles):
 * Minimal: `dotfiles.sh install -p base`
 * Workstation / VirtualBox: `dotfiles.sh install -p desktop`
 
-The dotfiles repository now bootstraps its managed binary from GitHub Releases and auto-detects the Arch platform internally. This installer clones the repository into the user's home directory, then applies the `base` or `desktop` profile to provision shell environments (zsh, bash), editors (neovim, VS Code), window managers (xmonad), and more.
+The dotfiles repository now bootstraps its managed binary from GitHub Releases and auto-detects the Arch platform internally. This installer clones the repository into the user's home directory, then applies the `base` or `desktop` profile to provision shell environments (zsh, bash), editors (neovim, VS Code Insiders), compositors (Hyprland), and more.
 
 ## Customization
 
@@ -187,7 +195,7 @@ This installation prioritizes security with multiple layers of protection:
   - Check internet connection: `ping archlinux.org`
   - Verify mirror list: `cat /etc/pacman.d/mirrorlist`
   - Update keyring: `pacman -Sy archlinux-keyring`
-* **No NVIDIA prompt**: Device not detected (falls back to generic driver)
+* **No NVIDIA prompt**: Device not detected (mesa/nouveau used by default)
 * **Boot fails after installation**:
   - Verify GRUB installation completed
   - Check BIOS/UEFI settings for boot order
