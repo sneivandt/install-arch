@@ -197,7 +197,7 @@ get_device_prefix() {
   local device="$1"
   local dpfx=""
   case "$device" in
-    "/dev/nvme"*) dpfx="p" ;;
+    "/dev/nvme"*|"/dev/mmcblk"*|"/dev/loop"*) dpfx="p" ;;
   esac
   echo "$dpfx"
 }

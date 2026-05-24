@@ -97,7 +97,7 @@ jobs:
       - name: Check for required commands
         run: |
           echo "Checking for required commands in script..."
-          grep -E 'pacman|dialog|fdisk|cryptsetup|lvcreate|arch-chroot' install-arch.sh
+          grep -E 'pacman|dialog|sfdisk|cryptsetup|lvcreate|arch-chroot' install-arch.sh
 
       - name: Verify file permissions
         run: |
@@ -140,5 +140,4 @@ jobs:
             echo "$OUTPUT"
             exit 1
           fi
-
 

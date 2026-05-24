@@ -29,6 +29,22 @@ test_device_prefix_sata() {
   assert_equals "" "$result" "SATA device should have no prefix"
 }
 
+# Test 2b: Device prefix logic for eMMC devices
+test_device_prefix_mmc() {
+  local device="/dev/mmcblk0"
+  local result
+  result=$(get_device_prefix "$device")
+  assert_equals "p" "$result" "eMMC device should have 'p' prefix"
+}
+
+# Test 2c: Device prefix logic for loop devices used by integration tests
+test_device_prefix_loop() {
+  local device="/dev/loop0"
+  local result
+  result=$(get_device_prefix "$device")
+  assert_equals "p" "$result" "Loop device should have 'p' prefix"
+}
+
 # Test 3: Partition naming for NVMe
 test_partition_naming_nvme() {
   local device="/dev/nvme0n1"
@@ -165,8 +181,8 @@ test_base_packages() {
     "grub" "jq" "lazygit" "linux" "linux-firmware" "linux-headers"
     "linux-lts" "linux-lts-headers" "lvm2" "man-db" "man-pages"
     "networkmanager" "neovim" "openssh" "pacman-contrib" "reflector"
-    "ripgrep" "sed" "shellcheck" "tmux" "ufw" "util-linux" "vim" "wget"
-    "xdg-user-dirs" "zip" "zoxide" "zsh" "zsh-autosuggestions"
+    "ripgrep" "sed" "shellcheck" "rustup" "sudo" "tmux" "ufw"
+    "util-linux" "vim" "wget" "xdg-user-dirs" "zip" "zoxide" "zsh" "zsh-autosuggestions"
     "zsh-completions" "zsh-syntax-highlighting"
   )
 
@@ -190,7 +206,7 @@ test_gui_packages() {
     "hyprland" "hypridle" "hyprlock" "hyprpaper" "mako"
     "otf-font-awesome" "papirus-icon-theme" "playerctl"
     "qt5-wayland" "qt6-wayland" "slurp" "uwsm" "waybar"
-    "wl-clipboard" "wofi" "xorg-xwayland"
+    "wl-clipboard" "fuzzel" "xorg-xwayland"
   )
 
   local passed=0
@@ -261,11 +277,14 @@ test_dotfiles_bootstrap_minimal() {
   parent_dir_line="[DRY-RUN] Would execute: arch-chroot /mnt install -d -o testuser -g testuser /home/testuser/src"
   runuser_line_prefix="[DRY-RUN] Would execute: arch-chroot /mnt runuser -u testuser --"
   base_profile_fragment="/home/testuser/src/dotfiles/dotfiles.sh install -p base"
+  test_profile_fragment="/home/testuser/src/dotfiles/dotfiles.sh test -p base"
 
   assert_contains "$output" "$parent_dir_line" \
     "Dotfiles bootstrap creates parent directory"
   assert_contains "$output" "$runuser_line_prefix" \
     "Dotfiles bootstrap runs commands as the target user"
+  assert_contains "$output" "HOME=/home/testuser" \
+    "Dotfiles bootstrap sets HOME for runuser commands"
   assert_contains "$output" "https://github.com/sneivandt/dotfiles.git" \
     "Dotfiles bootstrap uses the current repo URL"
   assert_contains "$output" "git clone" "Dotfiles bootstrap invokes git clone"
@@ -273,6 +292,8 @@ test_dotfiles_bootstrap_minimal() {
     "Dotfiles bootstrap clones into the user's src directory"
   assert_occurs_before "$output" "$parent_dir_line" "https://github.com/sneivandt/dotfiles.git" \
     "Dotfiles parent directory is created before cloning"
+  assert_contains "$output" "$test_profile_fragment" \
+    "Dotfiles profile is validated before install"
   assert_contains "$output" "$base_profile_fragment" \
     "Minimal mode uses the base dotfiles profile"
 }
@@ -292,6 +313,8 @@ test_dotfiles_bootstrap_desktop() {
 # Run all tests
 test_device_prefix_nvme
 test_device_prefix_sata
+test_device_prefix_mmc
+test_device_prefix_loop
 test_partition_naming_nvme
 test_partition_naming_sata
 test_hostname_validation_valid

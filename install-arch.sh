@@ -3,8 +3,8 @@
 #
 # Run from Arch live ISO as root. Collects minimal input (mode, disk, hostname,
 # user, passwords) then automates: partitioning, LUKS2 encryption + LVM, base
-# package install, optional GUI/workstation stack, AUR helper/temp user,
-# dotfiles, and bootloader configuration.
+# package install, optional GUI/workstation stack, user creation, dotfiles, and
+# bootloader configuration.
 #
 # WARNING: Destroys selected disk contents completely.
 # Modes:
@@ -16,12 +16,8 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-# Preamble ---------------------------------------------------------------- {{{
+# Runtime setup
 
-# Trap errors with line number + failing command.
-trap 'echo "$0: Error on line "$LINENO": $BASH_COMMAND"' ERR
-
-# Parse command line arguments
 DRY_RUN=false
 TEST_MODE=false
 while [[ $# -gt 0 ]]; do
@@ -42,8 +38,44 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Ensure dialog is present for interactive prompts (skip in test mode).
+error_handler() {
+  local exit_code=$?
+  echo "$0: Error on line ${BASH_LINENO[0]}: ${BASH_COMMAND}" >&2
+  exit "$exit_code"
+}
+
+cleanup() {
+  if [ "$DRY_RUN" = "true" ]; then
+    return
+  fi
+
+  set +o errexit
+  swapoff /dev/mapper/volgroup0-swap 2>/dev/null || true
+  if mountpoint -q /mnt 2>/dev/null; then
+    umount -R /mnt 2>/dev/null || true
+  fi
+  if [ -e /dev/volgroup0/root ] || [ -e /dev/mapper/volgroup0-root ]; then
+    vgchange -an volgroup0 2>/dev/null || true
+  fi
+  if [ -e /dev/mapper/cryptlvm ]; then
+    cryptsetup close cryptlvm 2>/dev/null || true
+  fi
+}
+
+# Report the failing command and release any partially-mounted target system.
+trap error_handler ERR
+trap cleanup EXIT
+
+# The interactive path depends on dialog before package installation begins.
 if [ "$TEST_MODE" = "false" ]; then
+  if [ "$EUID" -ne 0 ]; then
+    echo "Error: This installer must be run as root from the Arch Linux live ISO."
+    exit 1
+  fi
+  if [ "$DRY_RUN" = "false" ] && [ ! -d /sys/firmware/efi/efivars ]; then
+    echo "Error: UEFI boot mode is required. Reboot the installer media in UEFI mode."
+    exit 1
+  fi
   if ! pacman -Sy --noconfirm dialog; then
     echo "Error: Failed to install dialog. Cannot proceed with interactive installation."
     echo "Check your internet connection and try again."
@@ -51,7 +83,7 @@ if [ "$TEST_MODE" = "false" ]; then
   fi
 fi
 
-# Helper functions for dry-run mode
+# Command helpers keep dry-run output and chroot execution consistent.
 run_cmd() {
   if [ "$DRY_RUN" = "true" ]; then
     # Use %q to show a shell-escaped representation of each argument,
@@ -64,51 +96,228 @@ run_cmd() {
   fi
 }
 
-# }}}
-# Input ------------------------------------------------------------------- {{{
+dry_run_msg() {
+  echo "[DRY-RUN] $*"
+}
+
+in_target() {
+  run_cmd arch-chroot /mnt "$@"
+}
+
+as_user() {
+  in_target runuser -u "$user" -- env HOME="/home/$user" USER="$user" LOGNAME="$user" "$@"
+}
+
+write_file() {
+  local path="$1"
+
+  if [ "$DRY_RUN" = "true" ]; then
+    dry_run_msg "Would write $path"
+  else
+    mkdir -p "${path%/*}"
+    cat > "$path"
+  fi
+}
+
+append_file() {
+  local path="$1"
+
+  if [ "$DRY_RUN" = "true" ]; then
+    dry_run_msg "Would append to $path"
+  else
+    mkdir -p "${path%/*}"
+    cat >> "$path"
+  fi
+}
+
+enable_services() {
+  local service
+
+  for service in "$@"; do
+    in_target systemctl enable "$service"
+  done
+}
+
+require_command() {
+  local command_name="$1"
+
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    echo "Error: Required command not found: $command_name"
+    exit 1
+  fi
+}
+
+run_preflight_checks() {
+  local required_commands=(
+    arch-chroot
+    awk
+    blkid
+    blockdev
+    cryptsetup
+    curl
+    findmnt
+    genfstab
+    lsblk
+    lvcreate
+    mkfs.ext4
+    mkfs.vfat
+    mkswap
+    mount
+    openssl
+    pacman
+    pacstrap
+    partx
+    pvcreate
+    sfdisk
+    swapon
+    udevadm
+    vgchange
+    vgcreate
+    vgs
+    wipefs
+  )
+  local command_name
+
+  if [ "$DRY_RUN" = "true" ]; then
+    return
+  fi
+
+  if [ "$EUID" -ne 0 ]; then
+    echo "Error: This installer must be run as root."
+    exit 1
+  fi
+
+  for command_name in "${required_commands[@]}"; do
+    require_command "$command_name"
+  done
+
+  if command -v timedatectl >/dev/null 2>&1; then
+    if ! timedatectl set-ntp true; then
+      echo "Warning: Failed to enable NTP; TLS downloads may fail if system time is wrong." >&2
+    fi
+  fi
+
+  if ! curl -fsSL --connect-timeout 10 --max-time 20 https://archlinux.org/ >/dev/null; then
+    echo "Error: Network check failed. Connect to the internet before running the installer."
+    exit 1
+  fi
+}
+
+validate_target_device() {
+  local target_device="$1"
+  local device_type
+  local min_bytes=$((10 * 1024 * 1024 * 1024))
+  local size_bytes
+
+  if [ "$DRY_RUN" = "true" ]; then
+    return
+  fi
+
+  if [ -z "$target_device" ] || [ ! -b "$target_device" ]; then
+    echo "Error: Target device '$target_device' does not exist or is not a block device."
+    exit 1
+  fi
+
+  device_type="$(lsblk -dn -o TYPE "$target_device")"
+  if [ "$device_type" != "disk" ] && [ "$device_type" != "loop" ]; then
+    echo "Error: Target device '$target_device' is type '$device_type', not a disk."
+    exit 1
+  fi
+
+  if lsblk -nr -o MOUNTPOINT "$target_device" | grep -q .; then
+    echo "Error: Target device '$target_device' or one of its partitions is mounted."
+    exit 1
+  fi
+
+  size_bytes="$(blockdev --getsize64 "$target_device")"
+  if [ "$size_bytes" -lt "$min_bytes" ]; then
+    echo "Error: Target device must be at least 10 GiB."
+    exit 1
+  fi
+}
+
+confirm_destructive_action() {
+  local target_device="$1"
+  local device_summary
+
+  if [ "$TEST_MODE" = "true" ] || [ "$DRY_RUN" = "true" ]; then
+    return
+  fi
+
+  device_summary="$(lsblk -dno NAME,SIZE,MODEL "$target_device" | sed 's/[[:space:]]\+/ /g')"
+  dialog --clear --defaultno --yesno \
+    "This will permanently erase all data on:\n\n$device_summary\n\nContinue?" 0 0 || exit 1
+}
+
+ensure_install_names_available() {
+  if [ "$DRY_RUN" = "true" ]; then
+    return
+  fi
+
+  if [ -e /dev/mapper/cryptlvm ]; then
+    echo "Error: /dev/mapper/cryptlvm already exists. Close or rename it before installing."
+    exit 1
+  fi
+
+  if vgs --noheadings volgroup0 >/dev/null 2>&1; then
+    echo "Error: LVM volume group 'volgroup0' already exists. Remove or rename it before installing."
+    exit 1
+  fi
+}
+
+wait_for_block_device() {
+  local block_device="$1"
+  local attempt
+
+  for ((attempt = 1; attempt <= 10; attempt++)); do
+    if [ -b "$block_device" ]; then
+      return
+    fi
+    sleep 1
+  done
+
+  echo "Error: Timed out waiting for block device '$block_device'."
+  exit 1
+}
+
+run_preflight_checks
+
+# Input and validation
 # Collect required interactive parameters before mutating system state.
 
-# Install mode
 if [ "$TEST_MODE" = "true" ]; then
   mode="${TEST_MODE_MODE:-1}"
 else
   mode=$(dialog --stdout --clear --menu "Select install mode" 0 0 0 "1" "Minimal" "2" "Workstation" "3" "VirtualBox") || exit 1
 fi
-# Validate mode is 1, 2, or 3
 if [[ ! "$mode" =~ ^[1-3]$ ]]; then
   echo "Error: Invalid mode '$mode'. Must be 1, 2, or 3."
   exit 1
 fi
 
-# Hostname
 if [ "$TEST_MODE" = "true" ]; then
   hostname="${TEST_MODE_HOSTNAME:-testhost}"
 else
   hostname=$(dialog --stdout --clear --inputbox "Enter hostname" 0 40) || exit 1
 fi
 [ -z "$hostname" ] && echo "hostname cannot be empty" && exit 1
-# Convert hostname to lowercase for consistency
 hostname="${hostname,,}"
-# Validate hostname format (RFC 1123: alphanumeric and hyphens, no start/end with hyphen)
 if [[ ! "$hostname" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
   echo "Error: Invalid hostname '$hostname'. Must be lowercase alphanumeric with optional hyphens, 1-63 characters."
   exit 1
 fi
 
-# Username
 if [ "$TEST_MODE" = "true" ]; then
   user="${TEST_MODE_USER:-testuser}"
 else
   user=$(dialog --stdout --clear --inputbox "Enter username" 0 40) || exit 1
 fi
 [ -z "$user" ] && echo "username cannot be empty" && exit 1
-# Validate username format (lowercase alphanumeric, underscore, hyphen; must start with letter or underscore)
 if [[ ! "$user" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
   echo "Error: Invalid username '$user'. Must start with lowercase letter or underscore, 1-32 characters, lowercase alphanumeric/underscore/hyphen only."
   exit 1
 fi
 
-# User password
 if [ "$TEST_MODE" = "true" ]; then
   password1="${TEST_MODE_PASSWORD:-testpass123}"
   password2="$password1"
@@ -119,10 +328,8 @@ fi
 [ -z "$password1" ] && echo "password cannot be empty" && exit 1
 if [ "$password1" != "$password2" ]; then echo "Passwords did not match"; exit 1; fi
 
-# Installation disk
 if [ "$TEST_MODE" = "true" ]; then
   device="${TEST_MODE_DEVICE:-/dev/loop0}"
-  # In test mode without dry-run, ensure the device exists and is a block device.
   if [ "$DRY_RUN" = "false" ] && { [ -z "$device" ] || [ ! -b "$device" ]; }; then
     echo "In test mode, device \"$device\" does not exist or is not a block device."
     echo "Set TEST_MODE_DEVICE to a valid block device (for example, a loop device created with losetup)."
@@ -130,16 +337,29 @@ if [ "$TEST_MODE" = "true" ]; then
     exit 1
   fi
 else
-  devicelist=$(lsblk -dplnx size -o name,size | grep -Ev "boot|rpmb|loop" | tac)
-  # shellcheck disable=SC2086
-  device=$(dialog --stdout --clear --menu "Select installation disk" 0 0 0 ${devicelist}) || exit 1
+  device_options=()
+  while read -r disk_name disk_size; do
+    device_options+=( "$disk_name" "$disk_size" )
+  done < <(lsblk -dplnx size -o name,size,type | awk '$3 == "disk" { print $1, $2 }' | tac)
+
+  if [ "${#device_options[@]}" -eq 0 ]; then
+    echo "Error: No installable disk devices were found."
+    exit 1
+  fi
+
+  device=$(dialog --stdout --clear --menu "Select installation disk" 0 0 0 "${device_options[@]}") || exit 1
 fi
+validate_target_device "$device"
+confirm_destructive_action "$device"
+ensure_install_names_available
+
 dpfx=""
 case "$device" in
-  "/dev/nvme"*|"/dev/mmcblk"*) dpfx="p" ;;
+  "/dev/nvme"*|"/dev/mmcblk"*|"/dev/loop"*) dpfx="p" ;;
 esac
+part_efi="${device}${dpfx}1"
+part_luks="${device}${dpfx}2"
 
-# Encryption password
 if [ "$TEST_MODE" = "true" ]; then
   password_luks1="${TEST_MODE_LUKS_PASSWORD:-lukspass123}"
   password_luks2="$password_luks1"
@@ -150,12 +370,12 @@ fi
 [ -z "$password_luks1" ] && echo "disk encryption password cannot be empty" && exit 1
 if [ "$password_luks1" != "$password_luks2" ]; then echo "Passwords did not match"; exit 1; fi
 
-# Video driver
+# Only prompt for NVIDIA drivers when hardware is detected in desktop modes.
 video_driver=""
 if [ "$mode" -eq 2 ] || [ "$mode" -eq 3 ]; then
   if [ "$TEST_MODE" = "true" ]; then
     video_driver="${TEST_MODE_VIDEO_DRIVER:-}"
-  elif lspci | grep -e VGA -e 3D | grep -q NVIDIA; then
+  elif command -v lspci >/dev/null 2>&1 && lspci | grep -e VGA -e 3D | grep -q NVIDIA; then
     video_driver=$(dialog --stdout --clear --menu "NVIDIA GPU detected. Select driver" 0 0 0 \
       "nvidia-open" "Open kernel modules (Turing+, recommended)" \
       "nvidia" "Proprietary (pre-Turing GPUs)" \
@@ -166,88 +386,78 @@ if [ "$mode" -eq 2 ] || [ "$mode" -eq 3 ]; then
   fi
 fi
 
-# Logging
-# Only log to files when not in test mode
+# Avoid writing logs during tests so assertions can inspect stdout/stderr directly.
 if [ "$TEST_MODE" != "true" ]; then
-  # Simple file redirection without process substitution
   exec 1>> "stdout.log"
   exec 2>> "stderr.log"
 fi
 
-# }}}
-# Disk -------------------------------------------------------------------- {{{
-#
-# Setup the disk
+# Disk provisioning
+# Create ESP + LUKS2-on-LVM layout and mount it at /mnt.
 
-# Partitioning
 if [ "$DRY_RUN" = "true" ]; then
-  echo "[DRY-RUN] Would partition $device with fdisk"
+  dry_run_msg "Would wipe signatures and create GPT partitions on $device"
 else
-  fdisk "$device" <<'EOF' # p1 make type 1 (UEFI)
-g
-n
-1
+  wipefs --all --force "$device"
+  sfdisk --wipe always --wipe-partitions always "$device" <<'EOF'
+label: gpt
 
-+512M
-n
-2
-
-
-t
-2
-8e
-w
+size=512MiB, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B
+type=CA7D7CCB-63ED-4C53-861C-1742536059CC
 EOF
+  partx --update "$device"
+  udevadm settle
+  wait_for_block_device "$part_efi"
+  wait_for_block_device "$part_luks"
 fi
 
-# Encrypt root drive
 if [ "$DRY_RUN" = "true" ]; then
-  echo "[DRY-RUN] Would encrypt ${device}${dpfx}2 with LUKS2"
+  dry_run_msg "Would encrypt $part_luks with LUKS2"
 else
-  echo -n "$password_luks1" | cryptsetup luksFormat --type luks2 "${device}${dpfx}2" -
+  printf '%s' "$password_luks1" | cryptsetup luksFormat --type luks2 --batch-mode --key-file - "$part_luks"
 fi
 
-# Open root drive
 if [ "$DRY_RUN" = "true" ]; then
-  echo "[DRY-RUN] Would open LUKS device ${device}${dpfx}2 as cryptlvm"
+  dry_run_msg "Would open LUKS device $part_luks as cryptlvm"
 else
-  echo -n "$password_luks1" | cryptsetup open "${device}${dpfx}2" cryptlvm -
+  printf '%s' "$password_luks1" | cryptsetup open --key-file - "$part_luks" cryptlvm
+  unset password_luks1 password_luks2
 fi
 
-# Create physical volume
-run_cmd pvcreate /dev/mapper/cryptlvm
-
-# Create volume group
+run_cmd pvcreate --yes --force /dev/mapper/cryptlvm
 run_cmd vgcreate volgroup0 /dev/mapper/cryptlvm
 
-# Create logical volumes
 run_cmd lvcreate -L 1G volgroup0 -n swap
 run_cmd lvcreate -l 100%FREE volgroup0 -n root
 
-# Format
-run_cmd mkswap /dev/mapper/volgroup0-swap
-run_cmd mkfs.ext4 /dev/mapper/volgroup0-root
-run_cmd mkfs.vfat -F32 -n EFI "${device}${dpfx}1"
+run_cmd mkswap -f /dev/mapper/volgroup0-swap
+run_cmd mkfs.ext4 -F /dev/mapper/volgroup0-root
+run_cmd mkfs.vfat -F32 -n EFI "$part_efi"
 
-# Mount
 run_cmd mount /dev/mapper/volgroup0-root /mnt
 run_cmd swapon /dev/mapper/volgroup0-swap
-run_cmd mkdir /mnt/boot
-run_cmd mount "${device}${dpfx}1" /mnt/boot
+run_cmd mkdir -p /mnt/boot
+run_cmd mount "$part_efi" /mnt/boot
 
-# }}}
-# Pacstrap ---------------------------------------------------------------- {{{
-#
-# Install packages
+# Package installation
+# Refresh package metadata/keyring, select packages for the chosen mode, then pacstrap.
 
-# Update mirrors
 if [ "$DRY_RUN" = "true" ]; then
-  echo "[DRY-RUN] Would update mirrorlist"
+  dry_run_msg "Would update mirrorlist"
 else
-  curl -sL 'https://www.archlinux.org/mirrorlist/?country=US&protocol=https&ip_version=4' | sed 's/^#Server/Server/' > /etc/pacman.d/mirrorlist
+  mirrorlist_tmp="$(mktemp)"
+  curl -fsSL 'https://archlinux.org/mirrorlist/?country=US&protocol=https&ip_version=4' \
+    | sed 's/^#Server/Server/' > "$mirrorlist_tmp"
+  if ! grep -q '^Server = ' "$mirrorlist_tmp"; then
+    echo "Error: Downloaded mirrorlist did not contain any enabled HTTPS mirrors."
+    rm -f "$mirrorlist_tmp"
+    exit 1
+  fi
+  install -m 0644 "$mirrorlist_tmp" /etc/pacman.d/mirrorlist
+  rm -f "$mirrorlist_tmp"
+  pacman -Sy --needed --noconfirm archlinux-keyring
 fi
 
-# Detect CPU vendor for microcode updates
 cpu_vendor=""
 if [ "$DRY_RUN" = "false" ] && [ "$TEST_MODE" = "false" ]; then
   if grep -q "GenuineIntel" /proc/cpuinfo; then
@@ -257,7 +467,6 @@ if [ "$DRY_RUN" = "false" ] && [ "$TEST_MODE" = "false" ]; then
   fi
 fi
 
-# Base packages
 packages=(
   base \
   base-devel \
@@ -294,6 +503,8 @@ packages=(
   ripgrep \
   sed \
   shellcheck \
+  rustup \
+  sudo \
   tmux \
   ufw \
   util-linux \
@@ -308,7 +519,6 @@ packages=(
   zsh-syntax-highlighting
 )
 
-# Workstation packages (Wayland + Hyprland desktop)
 packages_gui=(
   alacritty \
   alsa-utils \
@@ -329,21 +539,19 @@ packages_gui=(
   uwsm \
   waybar \
   wl-clipboard \
-  wofi \
+  fuzzel \
   xorg-xwayland
 )
 
-# Add NVIDIA driver if selected (Wayland uses mesa/nouveau by default)
+# Wayland uses mesa/nouveau by default; add NVIDIA only when explicitly selected.
 if [ -n "$video_driver" ]; then
   packages_gui=( "${packages_gui[@]}" "$video_driver" )
 fi
 
-# Virtualbox packages
 packages_vbox=(
   virtualbox-guest-utils
 )
 
-# Add CPU microcode package if detected
 if [ -n "$cpu_vendor" ]; then
   if [ "$cpu_vendor" = "intel" ]; then
     packages=( "${packages[@]}" "intel-ucode" )
@@ -352,7 +560,6 @@ if [ -n "$cpu_vendor" ]; then
   fi
 fi
 
-# Select packages
 case "$mode" in
   2)
     packages=( "${packages[@]}" "${packages_gui[@]}" )
@@ -362,126 +569,89 @@ case "$mode" in
     ;;
 esac
 
-# Pacstrap
-run_cmd pacstrap /mnt "${packages[@]}"
+run_cmd pacstrap -K /mnt "${packages[@]}"
 
-# }}}
-# General ----------------------------------------------------------------- {{{
-#
-# General system config
+# Target system configuration
+# Write base OS configuration and enable services before user bootstrap.
 
-# Generate filesystem table
 if [ "$DRY_RUN" = "true" ]; then
-  echo "[DRY-RUN] Would generate fstab"
+  dry_run_msg "Would generate fstab"
 else
   genfstab -U /mnt >> /mnt/etc/fstab
 fi
 
-# sh -> dash
-run_cmd arch-chroot /mnt ln -sfT dash /usr/bin/sh
+in_target ln -sfT dash /usr/bin/sh
 
-# Set hostname
-if [ "$DRY_RUN" = "true" ]; then
-  echo "[DRY-RUN] Would set hostname to $hostname"
-else
-  echo "$hostname" > /mnt/etc/hostname
-  cat >>/mnt/etc/hosts <<EOF
+write_file /mnt/etc/hostname <<EOF
+$hostname
+EOF
+append_file /mnt/etc/hosts <<EOF
 127.0.0.1 localhost.localdomain localhost
 ::1 localhost.localdomain localhost
 127.0.0.1 $hostname.localdomain $hostname
 EOF
-fi
 
-# Set locale
-if [ "$DRY_RUN" = "true" ]; then
-  echo "[DRY-RUN] Would set locale to en_US.UTF-8"
-else
-  echo "en_US.UTF-8 UTF-8" > /mnt/etc/locale.gen
-fi
-run_cmd arch-chroot /mnt locale-gen
+write_file /mnt/etc/locale.gen <<'EOF'
+en_US.UTF-8 UTF-8
+EOF
+in_target locale-gen
 
-# Configure DNS with systemd-resolved (modern, supports DNSSEC)
-# Note: NetworkManager will manage /etc/resolv.conf via systemd-resolved
-if [ "$DRY_RUN" = "true" ]; then
-  echo "[DRY-RUN] Would configure systemd-resolved"
-else
-  # Create resolved configuration for Google DNS with DNSSEC
-  cat >/mnt/etc/systemd/resolved.conf <<'EOF'
+# NetworkManager delegates DNS to resolved; allow-downgrade avoids strict DNSSEC
+# failures on unsigned or misconfigured zones while still validating when possible.
+write_file /mnt/etc/systemd/resolved.conf <<'EOF'
 [Resolve]
 DNS=8.8.8.8 8.8.4.4
 FallbackDNS=1.1.1.1 1.0.0.1
-DNSSEC=yes
+DNSSEC=allow-downgrade
 DNSOverTLS=opportunistic
 EOF
-fi
+write_file /mnt/etc/NetworkManager/conf.d/dns.conf <<'EOF'
+[main]
+dns=systemd-resolved
+EOF
 
-# Initialize audio volume for GUI modes (store ALSA state)
+# Store an initial ALSA state so desktop sessions start with usable volume.
 case "$mode" in
   2|3)
-    run_cmd arch-chroot /mnt amixer -q sset Master 100%
-    run_cmd arch-chroot /mnt alsactl store
+    in_target amixer -q sset Master 100%
+    in_target alsactl store
     ;;
 esac
 
-# Set system time zone (adjust if deploying outside US/Pacific)
-run_cmd arch-chroot /mnt ln -sf /usr/share/zoneinfo/US/Pacific /etc/localtime
+# The installer is opinionated; adjust this before running for other regions.
+in_target ln -sf /usr/share/zoneinfo/US/Pacific /etc/localtime
 
-# Enable NetworkManager for network management
-run_cmd arch-chroot /mnt systemctl enable NetworkManager.service
+enable_services \
+  NetworkManager.service \
+  systemd-resolved.service \
+  ufw.service \
+  fail2ban.service \
+  docker.service \
+  systemd-timesyncd.service \
+  paccache.timer \
+  fstrim.timer \
+  reflector.timer
 
-# Enable systemd-resolved for DNS with DNSSEC support
-run_cmd arch-chroot /mnt systemctl enable systemd-resolved.service
-# Ensure resolv.conf is managed by systemd-resolved for NetworkManager integration
-run_cmd arch-chroot /mnt ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+in_target ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 
-# Enable firewall for basic security hardening
-run_cmd arch-chroot /mnt systemctl enable ufw.service
+in_target ufw default deny incoming
+in_target ufw default allow outgoing
+in_target ufw --force enable
 
-# Configure firewall: deny incoming by default, allow outgoing
-run_cmd arch-chroot /mnt ufw --force enable
-run_cmd arch-chroot /mnt ufw default deny incoming
-run_cmd arch-chroot /mnt ufw default allow outgoing
-
-# Enable fail2ban for SSH brute-force protection
-run_cmd arch-chroot /mnt systemctl enable fail2ban.service
-
-# Enable Docker daemon
-run_cmd arch-chroot /mnt systemctl enable docker.service
-
-# Enable systemd time synchronization service
-run_cmd arch-chroot /mnt systemctl enable systemd-timesyncd.service
-
-# Enable pacman cache cleanup timer
-run_cmd arch-chroot /mnt systemctl enable paccache.timer
-
-# Enable periodic SSD TRIM for better SSD health and performance
-run_cmd arch-chroot /mnt systemctl enable fstrim.timer
-
-# Enable reflector timer for automatic mirrorlist updates
-run_cmd arch-chroot /mnt systemctl enable reflector.timer
-
-# Enable VirtualBox guest services (mode 3 only)
 if [ "$mode" -eq 3 ]; then
-  run_cmd arch-chroot /mnt systemctl enable vboxservice.service
+  enable_services vboxservice.service
 fi
 
-# }}}
-# Pacman ------------------------------------------------------------------ {{{
+# Pacman policy
 
-# Basic pacman cosmetic options (color + candy progress)
 if [ "$DRY_RUN" = "true" ]; then
-  echo "[DRY-RUN] Would configure pacman options"
+  dry_run_msg "Would configure pacman options"
 else
   sed -i '/^\[options\]/a Color\nILoveCandy' /mnt/etc/pacman.conf
 fi
 
-run_cmd mkdir -p /mnt/etc/pacman.d/hooks
-
-# Hook to keep /bin/sh pointing to dash after bash transactions
-if [ "$DRY_RUN" = "true" ]; then
-  echo "[DRY-RUN] Would create pacman hooks"
-else
-  cat >>/mnt/etc/pacman.d/hooks/dash.hook <<'EOF'
+# Keep /bin/sh pointed at dash even after bash package transactions.
+write_file /mnt/etc/pacman.d/hooks/dash.hook <<'EOF'
 [Trigger]
 Type = Package
 Operation = Install
@@ -494,8 +664,8 @@ Exec = /usr/bin/ln -sfT dash /usr/bin/sh
 Depends = dash
 EOF
 
-# Hook to clean old package cache entries (retain 5)
-cat >>/mnt/etc/pacman.d/hooks/paccache.hook <<'EOF'
+# Retain a small rollback window without letting the package cache grow forever.
+write_file /mnt/etc/pacman.d/hooks/paccache.hook <<'EOF'
 [Trigger]
 Operation = Remove
 Operation = Install
@@ -509,20 +679,10 @@ Exec = /usr/bin/paccache -rk5
 Depends = pacman-contrib
 EOF
 
+# Hardening and maintenance
+# Apply baseline kernel/network hardening plus maintenance service config.
 
-fi
-
-# }}}
-# Security Hardening ------------------------------------------------------ {{{
-#
-# Apply security-focused system hardening configurations
-
-# Create sysctl configuration for kernel hardening
-if [ "$DRY_RUN" = "true" ]; then
-  echo "[DRY-RUN] Would create security hardening sysctl configuration"
-else
-  mkdir -p /mnt/etc/sysctl.d
-  cat >/mnt/etc/sysctl.d/99-security.conf <<'EOF'
+write_file /mnt/etc/sysctl.d/99-security.conf <<'EOF'
 # Kernel hardening settings for improved security
 
 # Prevent kernel pointer leaks
@@ -555,19 +715,15 @@ net.ipv4.conf.default.secure_redirects = 0
 net.ipv4.conf.all.send_redirects = 0
 net.ipv4.conf.default.send_redirects = 0
 
-# Enable source address verification (anti-spoofing)
-net.ipv4.conf.all.rp_filter = 1
-net.ipv4.conf.default.rp_filter = 1
+# Enable source address verification without breaking common VPN/multihomed setups
+net.ipv4.conf.all.rp_filter = 2
+net.ipv4.conf.default.rp_filter = 2
 
 # Ignore ICMP ping requests (optional, uncomment to enable)
 # net.ipv4.icmp_echo_ignore_all = 1
 
 # Protect against time-wait assassination
 net.ipv4.tcp_rfc1337 = 1
-
-# Disable IPv6 router advertisements
-net.ipv6.conf.all.accept_ra = 0
-net.ipv6.conf.default.accept_ra = 0
 
 # Increase system file descriptor limit
 fs.file-max = 2097152
@@ -579,14 +735,8 @@ fs.suid_dumpable = 0
 # Enable ASLR (Address Space Layout Randomization)
 kernel.randomize_va_space = 2
 EOF
-fi
 
-# Configure fail2ban for SSH protection
-if [ "$DRY_RUN" = "true" ]; then
-  echo "[DRY-RUN] Would configure fail2ban for SSH protection"
-else
-  mkdir -p /mnt/etc/fail2ban
-  cat >/mnt/etc/fail2ban/jail.local <<'EOF'
+write_file /mnt/etc/fail2ban/jail.local <<'EOF'
 [DEFAULT]
 # Ban hosts for 1 hour (3600 seconds)
 bantime = 3600
@@ -602,14 +752,8 @@ enabled = true
 port = ssh
 filter = sshd
 EOF
-fi
 
-# Configure reflector for automatic mirror updates
-if [ "$DRY_RUN" = "true" ]; then
-  echo "[DRY-RUN] Would create /mnt/etc/xdg/reflector and configure reflector"
-else
-  mkdir -p "/mnt/etc/xdg/reflector"
-  cat >/mnt/etc/xdg/reflector/reflector.conf <<'EOF'
+write_file /mnt/etc/xdg/reflector/reflector.conf <<'EOF'
 # Reflector configuration for automatic mirror updates
 --save /etc/pacman.d/mirrorlist
 --protocol https
@@ -617,63 +761,25 @@ else
 --latest 20
 --sort rate
 EOF
-fi
 
-# }}}
-# AUR --------------------------------------------------------------------- {{{
-#
-# Install paru AUR helper using temporary build user
+# User and dotfiles
+# Create the primary user, temporarily allow sudo for dotfiles, then require sudo passwords.
 
-# Create temporary AUR build user
-run_cmd arch-chroot /mnt useradd -m -d /opt/aurbuilder aurbuilder
+in_target useradd -mU -G docker,wheel -s /bin/zsh -p "$(openssl passwd -6 "$password1")" "$user"
+in_target chsh -s /bin/zsh "$user"
+unset password1 password2
 
-# Grant restricted sudo for package installation only
-if [ "$DRY_RUN" = "true" ]; then
-  echo "[DRY-RUN] Would create sudoers file for aurbuilder"
-else
-  cat >> /mnt/etc/sudoers.d/aurbuilder <<'EOF'
-aurbuilder ALL=(ALL) NOPASSWD: /usr/bin/pacman
+write_file /mnt/etc/sudoers.d/00-installer-wheel-nopasswd <<'EOF'
+%wheel ALL=(ALL:ALL) NOPASSWD: ALL
 EOF
-  chmod 0440 /mnt/etc/sudoers.d/aurbuilder
+if [ "$DRY_RUN" = "false" ]; then
+  chmod 0440 /mnt/etc/sudoers.d/00-installer-wheel-nopasswd
+  in_target visudo -cf /etc/sudoers
 fi
 
-# Clone paru-bin at specific commit and build
-# Using latest stable release commit as of 2024
-run_cmd arch-chroot /mnt su aurbuilder -c "git clone https://aur.archlinux.org/paru-bin.git /opt/aurbuilder/paru-bin && cd /opt/aurbuilder/paru-bin && git checkout 0313c65 && makepkg -si --noconfirm"
+in_target passwd -l root
+in_target usermod -s /sbin/nologin root
 
-# Remove temporary build user and its sudo privileges
-run_cmd arch-chroot /mnt userdel aurbuilder
-run_cmd rm -rf /mnt/opt/aurbuilder
-run_cmd rm -f /mnt/etc/sudoers.d/aurbuilder
-
-# }}}
-# Users  ------------------------------------------------------------------ {{{
-#
-# Create main user, apply dotfiles, lock root, adjust sudo policy
-
-# Create user (groups: docker,wheel) with hashed password and zsh shell
-run_cmd arch-chroot /mnt useradd -mU -G docker,wheel -s /bin/zsh -p "$(openssl passwd -6 "$password1")" "$user"
-run_cmd arch-chroot /mnt chsh -s /bin/zsh "$user"
-
-# Temporarily allow passwordless sudo for bootstrapping
-if [ "$DRY_RUN" = "true" ]; then
-  echo "[DRY-RUN] Would modify sudoers for passwordless sudo"
-else
-  if ! sed -i '/^# %wheel ALL=(ALL) NOPASSWD: ALL$/s/^# //g' /mnt/etc/sudoers; then
-    echo "Warning: Failed to enable passwordless sudo for wheel group"
-  fi
-  # Verify the change was made
-  if ! grep -q "^%wheel ALL=(ALL) NOPASSWD: ALL$" /mnt/etc/sudoers; then
-    echo "Error: Failed to configure passwordless sudo. Bootstrap may fail."
-    exit 1
-  fi
-fi
-
-# Lock and disable interactive root login
-run_cmd arch-chroot /mnt passwd -l root
-run_cmd arch-chroot /mnt usermod -s /sbin/nologin root
-
-# Clone dotfiles repo and run installer (mode controls profile)
 dotfiles_repo="https://github.com/sneivandt/dotfiles.git"
 dotfiles_dir="/home/$user/src/dotfiles"
 case "$mode" in
@@ -685,72 +791,66 @@ case "$mode" in
     ;;
 esac
 echo "Preparing dotfiles bootstrap directory for $user"
-run_cmd arch-chroot /mnt install -d -o "$user" -g "$user" "/home/$user/src"
+in_target install -d -o "$user" -g "$user" "/home/$user/src"
 echo "Cloning dotfiles repository for $user"
-run_cmd arch-chroot /mnt runuser -u "$user" -- git clone "$dotfiles_repo" "$dotfiles_dir"
+as_user git clone "$dotfiles_repo" "$dotfiles_dir"
+echo "Validating dotfiles profile '$dotfiles_profile' for $user"
+as_user "$dotfiles_dir/dotfiles.sh" test -p "$dotfiles_profile"
 echo "Applying dotfiles profile '$dotfiles_profile' for $user"
-run_cmd arch-chroot /mnt runuser -u "$user" -- "$dotfiles_dir/dotfiles.sh" install -p "$dotfiles_profile"
+as_user "$dotfiles_dir/dotfiles.sh" install -p "$dotfiles_profile" -v
 
-# Reinstate sudo password requirement
 if [ "$DRY_RUN" = "true" ]; then
-  echo "[DRY-RUN] Would restore sudo password requirement"
+  dry_run_msg "Would remove /mnt/etc/sudoers.d/00-installer-wheel-nopasswd"
 else
-  if ! sed -i '/^%wheel ALL=(ALL) NOPASSWD: ALL$/s/^/# /g' /mnt/etc/sudoers; then
-    echo "Warning: Failed to comment passwordless sudo line"
-  fi
-  if ! sed -i '/^# %wheel ALL=(ALL) ALL$/s/^# //g' /mnt/etc/sudoers; then
-    echo "Warning: Failed to enable password-required sudo line"
-  fi
-  # Verify the change was made
-  if ! grep -q "^%wheel ALL=(ALL) ALL$" /mnt/etc/sudoers; then
-    echo "Warning: Sudo password requirement may not be properly configured"
-  fi
+  rm -f /mnt/etc/sudoers.d/00-installer-wheel-nopasswd
+fi
+write_file /mnt/etc/sudoers.d/10-wheel <<'EOF'
+%wheel ALL=(ALL:ALL) ALL
+EOF
+if [ "$DRY_RUN" = "false" ]; then
+  chmod 0440 /mnt/etc/sudoers.d/10-wheel
+  in_target visudo -cf /etc/sudoers
 fi
 
-# }}}
-# Init -------------------------------------------------------------------- {{{
-#
-# Initramfs generation + GRUB installation/config for encrypted root
+# Boot configuration
+# Build initramfs images with encryption/LVM hooks and install GRUB for UEFI boot.
 
-# Ensure required hooks present then build initramfs
 if [ "$DRY_RUN" = "true" ]; then
-  echo "[DRY-RUN] Would configure mkinitcpio hooks"
+  dry_run_msg "Would configure mkinitcpio hooks"
 else
-  if ! sed -i "s/^HOOKS.*/HOOKS=(base udev autodetect keyboard keymap consolefont modconf block encrypt lvm2 filesystems fsck)/" /mnt/etc/mkinitcpio.conf; then
+  mkinitcpio_hooks="HOOKS=(base udev keyboard keymap consolefont autodetect microcode modconf kms block encrypt lvm2 filesystems fsck)"
+  if ! sed -i "s/^HOOKS=.*/$mkinitcpio_hooks/" /mnt/etc/mkinitcpio.conf; then
     echo "Warning: Failed to update mkinitcpio hooks"
   fi
-  # Verify the hooks were set correctly
-  if ! grep -q "^HOOKS=(base udev autodetect keyboard keymap consolefont modconf block encrypt lvm2 filesystems fsck)" /mnt/etc/mkinitcpio.conf; then
+  if ! grep -Fxq "$mkinitcpio_hooks" /mnt/etc/mkinitcpio.conf; then
     echo "Error: mkinitcpio hooks not properly configured. System may not boot with encryption."
     exit 1
   fi
 fi
-# Build initramfs for both mainline and LTS kernels
-run_cmd arch-chroot /mnt mkinitcpio -p linux
-run_cmd arch-chroot /mnt mkinitcpio -p linux-lts
+in_target mkinitcpio -p linux
+in_target mkinitcpio -p linux-lts
 
-# Install GRUB to EFI and patch kernel line with cryptdevice parameter
-run_cmd arch-chroot /mnt grub-install "$device" --efi-directory=/boot
-run_cmd arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
 if [ "$DRY_RUN" = "true" ]; then
-  echo "[DRY-RUN] Would configure GRUB cryptdevice parameter"
+  dry_run_msg "Would configure GRUB cryptdevice parameter from $part_luks UUID"
 else
-  # Escape device path for sed (replace / with \/)
-  device_esc=$(sed 's/\//\\\//g' <<< "$device")
-  # dpfx is either 'p' or empty, no escaping needed
-  # More specific pattern: match lines starting with linux and containing vmlinuz-linux (not linux-lts)
-  sed_pattern="^\(\s*linux\s\+\)\/vmlinuz-linux\s.*"
-  sed_replacement="\1\/vmlinuz-linux root=\/dev\/mapper\/volgroup0-root rw cryptdevice=${device_esc}${dpfx}2:volgroup0 quiet"
-  sed -i "s/${sed_pattern}/${sed_replacement}/" /mnt/boot/grub/grub.cfg
+  crypt_uuid="$(blkid -s UUID -o value "$part_luks")"
+  if [ -z "$crypt_uuid" ]; then
+    echo "Error: Failed to resolve LUKS partition UUID for GRUB configuration."
+    exit 1
+  fi
+  grub_cmdline="GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$crypt_uuid:cryptlvm root=/dev/mapper/volgroup0-root\""
+  if grep -q '^GRUB_CMDLINE_LINUX=' /mnt/etc/default/grub; then
+    sed -i "s|^GRUB_CMDLINE_LINUX=.*|$grub_cmdline|" /mnt/etc/default/grub
+  else
+    echo "$grub_cmdline" >> /mnt/etc/default/grub
+  fi
 fi
+in_target grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB --recheck "$device"
+in_target grub-mkconfig -o /boot/grub/grub.cfg
 
-# }}}
-# Cleanup ----------------------------------------------------------------- {{{
-#
-# Final unmounts and swap deactivation
-
-# Release resources
+# Cleanup
+# Release resources explicitly; the EXIT trap handles failures before this point.
+run_cmd swapoff /dev/mapper/volgroup0-swap
 run_cmd umount -R /mnt
-run_cmd swapoff -a
-
-# }}}
+run_cmd vgchange -an volgroup0
+run_cmd cryptsetup close cryptlvm

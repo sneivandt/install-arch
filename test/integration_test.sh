@@ -108,7 +108,7 @@ run_integration_test() {
   
   # Step 2: Check for required commands
   log_info "Checking for required commands..."
-  local required_cmds=("losetup" "fdisk" "cryptsetup" "lvm" "mkfs.ext4" "mkfs.vfat")
+  local required_cmds=("losetup" "sfdisk" "wipefs" "partx" "udevadm" "cryptsetup" "lvm" "mkfs.ext4" "mkfs.vfat")
   for cmd in "${required_cmds[@]}"; do
     if ! command -v "$cmd" > /dev/null; then
       log_error "Required command not found: $cmd"

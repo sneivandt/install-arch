@@ -1,6 +1,6 @@
 # install-arch 🚀
 
-Automated, opinionated provisioning of an [Arch Linux](https://archlinux.org) system with encrypted LVM, user creation, dotfiles, and optional desktop packages — driven by a single interactive script: `install-arch.sh`.
+Automated, opinionated provisioning of an [Arch Linux](https://archlinux.org) system with encrypted LVM, user creation, dotfiles, and optional desktop packages -- driven by a single interactive script: `install-arch.sh`.
 
 [![CI](https://github.com/sneivandt/install-arch/actions/workflows/ci.yml/badge.svg)](https://github.com/sneivandt/install-arch/actions/workflows/ci.yml)
 
@@ -21,7 +21,7 @@ Interactive prompts (via `dialog`) cover: mode, hostname, user/password, disk en
 | Mode | Purpose | Extras |
 |------|---------|--------|
 | Minimal (1) | Fast CLI workstation base | Core tooling + modern CLI utilities |
-| Workstation (2) | Wayland + Hyprland tiling compositor | Desktop + optional NVIDIA + paru AUR helper |
+| Workstation (2) | Wayland + Hyprland tiling compositor | Desktop + optional NVIDIA + dotfiles-managed AUR packages |
 | VirtualBox (3) | Workstation for VM guests | Adds guest integrations |
 
 **Minimal mode** provides a lean, fast command-line system perfect for servers, development machines, or users who prefer terminal-based workflows.
@@ -38,17 +38,16 @@ Interactive prompts (via `dialog`) cover: mode, hostname, user/password, disk en
 4. Format & mount
 5. CPU detection (Intel/AMD) for microcode selection
 6. Fresh HTTPS mirrorlist
-7. Install base + mode additions + microcode
+7. Refresh keyring and install base + mode additions + microcode
 8. System config: fstab, hostname, locale, timezone
-9. Configure systemd-resolved for DNS with DNSSEC
+9. Configure NetworkManager + systemd-resolved with compatibility-focused DNSSEC
 10. Enable core services: NetworkManager, firewall (UFW), fail2ban, Docker, timesyncd, fstrim, reflector
 11. Configure firewall defaults and fail2ban rules
 12. Apply kernel hardening via sysctl parameters
 13. Pacman candy + hooks (dash, cache clean)
-14. Install paru AUR helper (for user package management)
-15. Create user (zsh, wheel, docker); fetch dotfiles & bootstrap
-16. Initramfs + GRUB (for both linux and linux-lts kernels)
-17. Cleanup (unmount, swapoff)
+14. Create user (zsh, wheel, docker); fetch dotfiles, validate profile, and bootstrap
+15. Initramfs + GRUB (for both linux and linux-lts kernels)
+16. Cleanup (unmount, swapoff, close LUKS)
 
 ## Noteworthy Packages
 
@@ -60,11 +59,12 @@ Only highlighting the distinctive ones — the usual Arch base is assumed:
 * Kernels: `linux` (latest) + `linux-lts` (stable fallback)
 * Microcode: Automatically installs `intel-ucode` or `amd-ucode` based on CPU detection
 * Shell: `zsh` (set as default) & `dash` (symlinked to `/bin/sh` via hook)
-* Dev / tooling: `docker`, `neovim`, `tmux`, `shellcheck`
+* Dev / tooling: `docker`, `neovim`, `tmux`, `shellcheck`, `rustup`
+* Privilege management: `sudo` with a temporary installer-only NOPASSWD drop-in, then password-required wheel sudo
 
 **Network & Security:**
 * Network: `networkmanager` (replaces dhcpcd for modern network management)
-* DNS: `systemd-resolved` (with DNSSEC and DNS-over-TLS support)
+* DNS: `systemd-resolved` (DNSSEC `allow-downgrade` and opportunistic DNS-over-TLS)
 * Firewall: `ufw` (enabled by default, deny incoming, allow outgoing)
 * SSH Protection: `fail2ban` (protects against brute-force attacks)
 * Mirror Management: `reflector` (automatic mirror list updates)
@@ -87,7 +87,7 @@ Only highlighting the distinctive ones — the usual Arch base is assumed:
 * Terminal: `alacritty`
 * Browser: `chromium`
 * Status bar: `waybar`
-* Launcher: `wofi`
+* Launcher: `fuzzel`
 * Notifications: `mako`
 * Wallpaper: `hyprpaper`
 * Screen lock: `hyprlock`, `hypridle`
@@ -100,7 +100,7 @@ Only highlighting the distinctive ones — the usual Arch base is assumed:
 * Theme: `papirus-icon-theme`
 
 **AUR Helper:**
-* `paru` - Installed for user package management (pinned to specific commit for security)
+* `paru` is bootstrapped by the dotfiles manager when AUR packages are declared, avoiding a stale installer-pinned AUR build path.
 
 **VirtualBox mode:**
 * `virtualbox-guest-utils`
@@ -111,7 +111,7 @@ Example (`/dev/sda`):
 * `/dev/sda1` → EFI (FAT32) mounted at `/boot`
 * `/dev/sda2` → LUKS2 container → VG `volgroup0` with LV `swap` (1G) + `root` (rest)
 
-GRUB passes `cryptdevice=<partition>:volgroup0` to unlock at boot.
+GRUB passes `cryptdevice=UUID=<luks-partition-uuid>:cryptlvm` and `root=/dev/mapper/volgroup0-root` through `/etc/default/grub`, so both mainline and LTS kernels receive the same encrypted-root configuration.
 
 ## Dotfiles Integration
 
@@ -119,7 +119,7 @@ Integrates with [sneivandt/dotfiles](https://github.com/sneivandt/dotfiles):
 * Minimal: `dotfiles.sh install -p base`
 * Workstation / VirtualBox: `dotfiles.sh install -p desktop`
 
-The dotfiles repository now bootstraps its managed binary from GitHub Releases and auto-detects the Arch platform internally. This installer clones the repository into the user's home directory, then applies the `base` or `desktop` profile to provision shell environments (zsh, bash), editors (neovim, VS Code Insiders), compositors (Hyprland), and more.
+The dotfiles repository bootstraps a checksummed Rust binary from GitHub Releases, self-updates, and auto-detects the `linux` and `arch` platform categories internally. This installer clones the repository to `~/src/dotfiles`, runs `dotfiles.sh test -p <profile>` first, then applies the `base` or `desktop` profile with verbose logging. Dotfiles owns user-level packages, AUR packages, symlinks, shell setup, systemd user units, editor configuration, and APM/VS Code setup.
 
 ## Customization
 
@@ -128,7 +128,7 @@ Consider editing before running:
 * Mirror country (currently US - auto-updated weekly via reflector)
 * Swap size (1G)
 * Package selections in `packages` and `packages_gui` arrays
-* DNS servers (Google DNS by default with DNSSEC via systemd-resolved)
+* DNS servers (Google DNS by default, Cloudflare fallback, DNSSEC allow-downgrade via systemd-resolved)
 * Firewall rules (UFW configured to deny incoming, allow outgoing)
 * Kernel hardening parameters in `/etc/sysctl.d/99-security.conf`
 
@@ -144,7 +144,7 @@ This installation prioritizes security with multiple layers of protection:
 **Network Security:**
 * **Firewall enabled** - UFW configured (deny incoming, allow outgoing by default)
 * **Fail2ban protection** - Automatic banning of brute-force SSH attempts (5 failures in 10 minutes = 1 hour ban)
-* **Modern DNS** - systemd-resolved with DNSSEC validation and opportunistic DNS-over-TLS
+* **Modern DNS** - systemd-resolved with DNSSEC validation where supported and opportunistic DNS-over-TLS
 * **Network isolation** - NetworkManager replaces dhcpcd for better security features
 
 **System Hardening:**
@@ -152,7 +152,7 @@ This installation prioritizes security with multiple layers of protection:
   - Kernel pointer leak prevention (`kernel.kptr_restrict = 2`)
   - Restricted dmesg access (`kernel.dmesg_restrict = 1`)
   - SYN flood protection (`net.ipv4.tcp_syncookies = 1`)
-  - Anti-spoofing via source address verification
+  - Anti-spoofing via loose source address verification for better VPN/multihomed compatibility
   - ICMP redirect protection
   - Disabled IP forwarding (unless needed for routing)
   - Core dump restrictions to prevent information leaks
@@ -160,7 +160,7 @@ This installation prioritizes security with multiple layers of protection:
 
 **Account Security:**
 * **Root account locked** (`nologin`) - preventing direct root login
-* **Sudo with password** - passwordless only during bootstrap, then password required
+* **Sudo with password** - passwordless only through a temporary installer drop-in during bootstrap, then password required
 * **User isolation** - regular user account with sudo access via wheel group
 * **Docker group membership** - user can manage containers without sudo
 
@@ -223,7 +223,7 @@ Unit tests validate individual functions and logic without requiring actual syst
 
 ```bash
 # Run unit tests
-./tests/unit_tests.sh
+./test/unit_tests.sh
 ```
 
 Tests cover:
@@ -238,7 +238,7 @@ Integration tests simulate a real installation using loop devices:
 
 ```bash
 # Run integration test (requires root)
-sudo ./tests/integration_test.sh
+sudo ./test/integration_test.sh
 ```
 
 The integration test:
@@ -285,8 +285,8 @@ bash -n install-arch.sh
 shellcheck install-arch.sh
 
 # Run all tests
-./tests/unit_tests.sh
-sudo ./tests/integration_test.sh  # Requires root
+./test/unit_tests.sh
+sudo ./test/integration_test.sh  # Requires root
 ```
 
 ### Contributing
@@ -300,8 +300,8 @@ Contributions are welcome! Please:
    - ShellCheck must pass with no warnings
    - Follow existing code style
 4. **Test thoroughly**:
-   - Run unit tests: `./tests/unit_tests.sh`
-   - Run integration tests: `sudo ./tests/integration_test.sh`
+    - Run unit tests: `./test/unit_tests.sh`
+    - Run integration tests: `sudo ./test/integration_test.sh`
    - Test in a VM for destructive changes
 5. **Submit a PR**: Use the pull request template and fill out all sections
 6. **Be patient**: Reviews may take time, especially for security-critical changes
@@ -328,8 +328,8 @@ cd install-arch
 git checkout -b feature/my-feature
 
 # Make changes and test
-./tests/unit_tests.sh                    # Unit tests
-sudo ./tests/integration_test.sh         # Integration tests
+./test/unit_tests.sh                     # Unit tests
+sudo ./test/integration_test.sh          # Integration tests
 shellcheck install-arch.sh               # ShellCheck analysis
 bash -n install-arch.sh                  # Syntax check
 

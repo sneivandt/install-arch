@@ -29,8 +29,8 @@
 ### Checklist
 - [ ] Script passes syntax check (`bash -n install-arch.sh`)
 - [ ] ShellCheck analysis passes with no errors (`shellcheck install-arch.sh`)
-- [ ] Unit tests pass (`./tests/unit_tests.sh`)
-- [ ] Integration tests pass (`sudo ./tests/integration_test.sh`)
+- [ ] Unit tests pass (`./test/unit_tests.sh`)
+- [ ] Integration tests pass (`sudo ./test/integration_test.sh`)
 - [ ] Tested in a VM or container (if applicable)
 - [ ] Manual testing performed (describe below)
 - [ ] Dry-run mode is supported and tested with all changes (`./install-arch.sh --dry-run --test-mode`)
