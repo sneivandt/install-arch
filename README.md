@@ -1,345 +1,150 @@
-# install-arch 🚀
-
-Automated, opinionated provisioning of an [Arch Linux](https://archlinux.org) system with encrypted LVM, user creation, dotfiles, and optional desktop packages -- driven by a single interactive script: `install-arch.sh`.
+# install-arch
 
 [![CI](https://github.com/sneivandt/install-arch/actions/workflows/ci.yml/badge.svg)](https://github.com/sneivandt/install-arch/actions/workflows/ci.yml)
 
-## Quick Start
+`install-arch.sh` is an opinionated, semi-interactive Arch Linux installer for a fresh UEFI machine. It provisions an encrypted LVM system, installs a practical CLI or Hyprland workstation package set, creates the primary user, applies dotfiles, configures boot, and leaves the system ready for first boot.
 
-Boot the Arch Linux live ISO, bring up networking, then:
+It is designed for one specific installation style rather than every possible Arch layout: full-disk install, LUKS2 encryption, LVM root/swap, GRUB on UEFI, NetworkManager, systemd-resolved, UFW, fail2ban, Docker, zsh, and the author's dotfiles.
+
+> [!WARNING]
+> This installer permanently erases the selected target disk. It does not support preserving existing partitions, dual boot, or in-place upgrades.
+
+## Quick start
+
+Boot the Arch Linux live ISO in UEFI mode, connect to the internet, then run from the root shell:
 
 ```bash
 curl -sL https://git.io/vpvGR | bash
 ```
 
-Interactive prompts (via `dialog`) cover: mode, hostname, user/password, disk encryption password, target disk, and (when relevant) NVIDIA driver choice. Output is logged to `stdout.log` and `stderr.log`.
+The installer prompts for install mode, hostname, username, user password, target disk, disk encryption password, and NVIDIA driver choice when NVIDIA hardware is detected in a desktop mode. Runtime logs are written to `stdout.log` and `stderr.log` after password collection is complete.
 
-> **⚠️ WARNING**: This script will **ERASE THE ENTIRE TARGET DISK**. Only run on a system where data loss is acceptable or on a fresh installation target.
+## Install modes
 
-## Modes
+| Mode | Use when | Adds |
+| --- | --- | --- |
+| `1` Minimal | You want a fast CLI-first system | Base Arch packages, development tools, modern terminal utilities, Docker, zsh, and the `base` dotfiles profile |
+| `2` Workstation | You want the full desktop setup | Minimal mode plus Hyprland, Wayland desktop utilities, Chromium, audio tools, fonts, themes, optional NVIDIA driver, and the `desktop` dotfiles profile |
+| `3` VirtualBox | You want the workstation setup inside VirtualBox | Workstation mode plus `virtualbox-guest-utils` and `vboxservice.service` |
 
-| Mode | Purpose | Extras |
-|------|---------|--------|
-| Minimal (1) | Fast CLI workstation base | Core tooling + modern CLI utilities |
-| Workstation (2) | Wayland + Hyprland tiling compositor | Desktop + optional NVIDIA + dotfiles-managed AUR packages |
-| VirtualBox (3) | Workstation for VM guests | Adds guest integrations |
+## What it installs
 
-**Minimal mode** provides a lean, fast command-line system perfect for servers, development machines, or users who prefer terminal-based workflows.
+The base package set includes:
 
-**Workstation mode** adds a Wayland desktop with the Hyprland tiling compositor, perfect for power users who want efficiency and customization.
+- **System:** `base`, `base-devel`, `linux`, `linux-lts`, headers for both kernels, `linux-firmware`, `grub`, `efibootmgr`, `lvm2`, `sudo`
+- **Security and networking:** `networkmanager`, `openssh`, `ufw`, `fail2ban`, `reflector`, `pacman-contrib`
+- **Development and CLI tools:** `git`, `curl`, `wget`, `neovim`, `vim`, `tmux`, `shellcheck`, `rustup`, `jq`, `ctags`
+- **Modern terminal utilities:** `bat`, `btop`, `duf`, `eza`, `fd`, `fzf`, `git-delta`, `lazygit`, `ripgrep`, `zoxide`
+- **Shell:** `zsh`, `zsh-autosuggestions`, `zsh-completions`, `zsh-syntax-highlighting`, with `dash` linked as `/bin/sh`
 
-**VirtualBox mode** is identical to Workstation but includes VirtualBox Guest Additions for seamless VM integration.
+Desktop modes add Hyprland and the surrounding Wayland stack: `hyprland`, `uwsm`, `waybar`, `alacritty`, `fuzzel`, `mako`, `hyprpaper`, `hyprlock`, `hypridle`, `grim`, `slurp`, `wl-clipboard`, `gammastep`, `playerctl`, `chromium`, `alsa-utils`, `qt5-wayland`, `qt6-wayland`, `xorg-xwayland`, `otf-font-awesome`, and `papirus-icon-theme`.
 
-## Installation Flow
+When CPU vendor detection succeeds, the installer also adds `intel-ucode` or `amd-ucode`.
 
-1. Collect input (dialog)
-2. GPT partitioning: EFI (512M) + encrypted LUKS2 container
-3. LUKS2 → LVM (swap + root)
-4. Format & mount
-5. CPU detection (Intel/AMD) for microcode selection
-6. Fresh HTTPS mirrorlist
-7. Refresh keyring and install base + mode additions + microcode
-8. System config: fstab, hostname, locale, timezone
-9. Configure NetworkManager + systemd-resolved with compatibility-focused DNSSEC
-10. Enable core services: NetworkManager, firewall (UFW), fail2ban, Docker, timesyncd, fstrim, reflector
-11. Configure firewall defaults and fail2ban rules
-12. Apply kernel hardening via sysctl parameters
-13. Pacman candy + hooks (dash, cache clean)
-14. Create user (zsh, wheel, docker); fetch dotfiles, validate profile, and bootstrap
-15. Initramfs + GRUB (for both linux and linux-lts kernels)
-16. Cleanup (unmount, swapoff, close LUKS)
+## Disk layout
 
-## Noteworthy Packages
+For a target such as `/dev/sda`, the installer creates:
 
-Only highlighting the distinctive ones — the usual Arch base is assumed:
+| Device | Purpose |
+| --- | --- |
+| `/dev/sda1` | 512 MiB EFI system partition, FAT32, mounted at `/boot` |
+| `/dev/sda2` | LUKS2 container opened as `/dev/mapper/cryptlvm` |
+| `volgroup0/swap` | 1 GiB swap logical volume |
+| `volgroup0/root` | Ext4 root logical volume using the remaining space |
 
-**Core System:**
-* Encryption & LVM stack: `cryptsetup`, `lvm2`
-* Boot: `efibootmgr`, `grub`
-* Kernels: `linux` (latest) + `linux-lts` (stable fallback)
-* Microcode: Automatically installs `intel-ucode` or `amd-ucode` based on CPU detection
-* Shell: `zsh` (set as default) & `dash` (symlinked to `/bin/sh` via hook)
-* Dev / tooling: `docker`, `neovim`, `tmux`, `shellcheck`, `rustup`
-* Privilege management: `sudo` with a temporary installer-only NOPASSWD drop-in, then password-required wheel sudo
+GRUB is installed for `x86_64-efi` and configured with `cryptdevice=UUID=<luks-partition-uuid>:cryptlvm root=/dev/mapper/volgroup0-root`. Both `linux` and `linux-lts` initramfs images are built with encryption and LVM hooks.
 
-**Network & Security:**
-* Network: `networkmanager` (replaces dhcpcd for modern network management)
-* DNS: `systemd-resolved` (DNSSEC `allow-downgrade` and opportunistic DNS-over-TLS)
-* Firewall: `ufw` (enabled by default, deny incoming, allow outgoing)
-* SSH Protection: `fail2ban` (protects against brute-force attacks)
-* Mirror Management: `reflector` (automatic mirror list updates)
+## System configuration
 
-**Modern CLI Utilities (Minimal mode):**
-* `bat` - cat with syntax highlighting
-* `btop` - modern resource monitor
-* `eza` - modern ls replacement
-* `fd` - modern find replacement
-* `ripgrep` - fast grep alternative
-* `fzf` - fuzzy finder
-* `git-delta` - better git diffs
-* `lazygit` - terminal git UI
-* `zoxide` - smarter cd
-* `duf` - modern df
+After package installation, the script configures:
 
-**Desktop (Workstation modes):**
-* Compositor: `hyprland` (Wayland tiling compositor)
-* Session: `uwsm` (Universal Wayland Session Manager)
-* Terminal: `alacritty`
-* Browser: `chromium`
-* Status bar: `waybar`
-* Launcher: `fuzzel`
-* Notifications: `mako`
-* Wallpaper: `hyprpaper`
-* Screen lock: `hyprlock`, `hypridle`
-* Screenshot: `grim`, `slurp`
-* Night light: `gammastep`
-* Media: `playerctl`
-* Clipboard: `wl-clipboard`
-* Wayland compat: `qt5-wayland`, `qt6-wayland`, `xorg-xwayland`
-* Fonts: `otf-font-awesome`
-* Theme: `papirus-icon-theme`
+- Hostname, `/etc/hosts`, `en_US.UTF-8`, and timezone `US/Pacific`
+- NetworkManager with DNS delegated to systemd-resolved
+- systemd-resolved using Google DNS, Cloudflare fallback DNS, DNSSEC `allow-downgrade`, and opportunistic DNS-over-TLS
+- UFW defaults: deny incoming, allow outgoing, then enable firewall
+- fail2ban for SSH using the systemd journal backend
+- Weekly reflector mirror updates and weekly fstrim
+- Pacman color/candy, a package-cache cleanup hook keeping the last five package versions, and a hook that keeps `/bin/sh` linked to `dash`
+- Baseline kernel and network hardening in `/etc/sysctl.d/99-security.conf`
+- A primary user in the `wheel` and `docker` groups with zsh as the login shell
+- Locked root password and `/sbin/nologin` for the root account
+- Password-required sudo for `wheel` after dotfiles bootstrap finishes
 
-**AUR Helper:**
-* `paru` is bootstrapped by the dotfiles manager when AUR packages are declared, avoiding a stale installer-pinned AUR build path.
+## Dotfiles
 
-**VirtualBox mode:**
-* `virtualbox-guest-utils`
+The installer integrates with [sneivandt/dotfiles](https://github.com/sneivandt/dotfiles). It clones the repository to `/home/<user>/src/dotfiles`, validates the selected profile, then applies it as the target user:
 
-## Disk Layout
+| Install mode | Dotfiles profile |
+| --- | --- |
+| Minimal | `base` |
+| Workstation | `desktop` |
+| VirtualBox | `desktop` |
 
-Example (`/dev/sda`):
-* `/dev/sda1` → EFI (FAT32) mounted at `/boot`
-* `/dev/sda2` → LUKS2 container → VG `volgroup0` with LV `swap` (1G) + `root` (rest)
-
-GRUB passes `cryptdevice=UUID=<luks-partition-uuid>:cryptlvm` and `root=/dev/mapper/volgroup0-root` through `/etc/default/grub`, so both mainline and LTS kernels receive the same encrypted-root configuration.
-
-## Dotfiles Integration
-
-Integrates with [sneivandt/dotfiles](https://github.com/sneivandt/dotfiles):
-* Minimal: `dotfiles.sh install -p base`
-* Workstation / VirtualBox: `dotfiles.sh install -p desktop`
-
-The dotfiles repository bootstraps a checksummed Rust binary from GitHub Releases, self-updates, and auto-detects the `linux` and `arch` platform categories internally. This installer clones the repository to `~/src/dotfiles`, runs `dotfiles.sh test -p <profile>` first, then applies the `base` or `desktop` profile with verbose logging. Dotfiles owns user-level packages, AUR packages, symlinks, shell setup, systemd user units, editor configuration, and APM/VS Code setup.
-
-## Customization
-
-Consider editing before running:
-* Timezone (`US/Pacific` hardcoded)
-* Mirror country (currently US - auto-updated weekly via reflector)
-* Swap size (1G)
-* Package selections in `packages` and `packages_gui` arrays
-* DNS servers (Google DNS by default, Cloudflare fallback, DNSSEC allow-downgrade via systemd-resolved)
-* Firewall rules (UFW configured to deny incoming, allow outgoing)
-* Kernel hardening parameters in `/etc/sysctl.d/99-security.conf`
-
-## Security
-
-This installation prioritizes security with multiple layers of protection:
-
-**Encryption & Boot Security:**
-* **Full disk encryption** (root + swap) using LUKS2 with strong defaults
-* **CPU microcode updates** - Automatically installs Intel or AMD microcode for security patches
-* **Dual kernel setup** - Latest kernel (linux) + LTS fallback (linux-lts) for stability
-
-**Network Security:**
-* **Firewall enabled** - UFW configured (deny incoming, allow outgoing by default)
-* **Fail2ban protection** - Automatic banning of brute-force SSH attempts (5 failures in 10 minutes = 1 hour ban)
-* **Modern DNS** - systemd-resolved with DNSSEC validation where supported and opportunistic DNS-over-TLS
-* **Network isolation** - NetworkManager replaces dhcpcd for better security features
-
-**System Hardening:**
-* **Kernel hardening** - sysctl parameters to protect against common attacks:
-  - Kernel pointer leak prevention (`kernel.kptr_restrict = 2`)
-  - Restricted dmesg access (`kernel.dmesg_restrict = 1`)
-  - SYN flood protection (`net.ipv4.tcp_syncookies = 1`)
-  - Anti-spoofing via loose source address verification for better VPN/multihomed compatibility
-  - ICMP redirect protection
-  - Disabled IP forwarding (unless needed for routing)
-  - Core dump restrictions to prevent information leaks
-  - Full ASLR enabled (`kernel.randomize_va_space = 2`)
-
-**Account Security:**
-* **Root account locked** (`nologin`) - preventing direct root login
-* **Sudo with password** - passwordless only through a temporary installer drop-in during bootstrap, then password required
-* **User isolation** - regular user account with sudo access via wheel group
-* **Docker group membership** - user can manage containers without sudo
-
-**Maintenance & Updates:**
-* **Automatic mirror updates** - reflector timer updates mirrors weekly
-* **SSD health** - fstrim timer runs weekly for SSD longevity
-* **Package cache cleanup** - paccache keeps last 5 versions automatically
-* **Time synchronization** - systemd-timesyncd for accurate system time
+The installer temporarily grants passwordless sudo to `wheel` while dotfiles are applied, removes that temporary sudoers file afterward, and replaces it with normal password-required `wheel` sudo.
 
 ## Requirements
 
-* **Arch Linux live ISO** (UEFI target required)
-* **Stable internet connection** for package downloads
-* **Entire target disk available** (no multi‑boot support yet)
-* **Minimum disk space**: 20GB recommended (10GB absolute minimum)
-* **UEFI firmware** (Legacy BIOS not supported)
+- Arch Linux live ISO booted in UEFI mode
+- Root privileges
+- Working internet connection
+- One whole target disk of at least 10 GiB, with 20 GiB or more recommended
+- No requirement to preserve data on the target disk
 
-> **Important**: Ensure your system supports UEFI boot mode. Most modern systems (2012+) support UEFI, but older hardware may not.
->
-> **Verify UEFI mode**: Before starting installation, confirm you're booted in UEFI mode by checking if `/sys/firmware/efi` exists:
-> ```bash
-> ls /sys/firmware/efi && echo "UEFI mode confirmed" || echo "Not in UEFI mode"
-> ```
-
-## Troubleshooting
-
-### Common Issues
-
-* **Small terminal → dialog truncation**: Enlarge window or use larger virtual console
-* **Time or key errors**: Ensure NTP active: `timedatectl set-ntp true`
-* **Package installation issues**:
-  - Check internet connection: `ping archlinux.org`
-  - Verify mirror list: `cat /etc/pacman.d/mirrorlist`
-  - Update keyring: `pacman -Sy archlinux-keyring`
-* **No NVIDIA prompt**: Device not detected (mesa/nouveau used by default)
-* **Boot fails after installation**:
-  - Verify GRUB installation completed
-  - Check BIOS/UEFI settings for boot order
-  - Ensure LUKS password is correct
-* **Dialog crashes or doesn't display**: Terminal too small, resize to at least 80x24
-
-### Getting Help
-
-1. Check the logs: `stdout.log` and `stderr.log` in the current directory
-2. Review error messages carefully - they usually indicate the specific issue
-3. Open an issue on GitHub with:
-   - Full error message
-   - Contents of log files
-   - Hardware details (especially for disk/NVIDIA issues)
-   - Mode selected and any customizations made
-
-## Development
-
-### Testing
-
-This project includes comprehensive testing to ensure reliability:
-
-#### Unit Tests
-Unit tests validate individual functions and logic without requiring actual system operations:
+Before starting, confirm the live ISO is booted in UEFI mode:
 
 ```bash
-# Run unit tests
-./test/unit_tests.sh
+test -d /sys/firmware/efi/efivars && echo "UEFI mode confirmed"
 ```
 
-Tests cover:
-- Input validation (hostname, username, password)
-- Device detection and naming (NVMe vs SATA/SSD)
-- Partition naming logic
-- Package name validation
-- Configuration file syntax
+## Customizing before install
 
-#### Integration Tests
-Integration tests simulate a real installation using loop devices:
+This project intentionally bakes in personal defaults. Review and edit `install-arch.sh` before running if you want different values for:
 
-```bash
-# Run integration test (requires root)
-sudo ./test/integration_test.sh
-```
+- Timezone: `US/Pacific`
+- Mirror country: `US`
+- Swap size: `1G`
+- DNS servers and DNSSEC/DNS-over-TLS policy
+- Package arrays: `packages`, `packages_gui`, `packages_vbox`
+- Enabled services and firewall rules
+- Sysctl hardening settings
+- Dotfiles repository, install path, or profile mapping
 
-The integration test:
-- Creates a virtual disk using a loop device
-- Runs `install-arch.sh` in dry-run and test modes against the loop device
-- Validates script syntax, option parsing, and flag acceptance (including partitioning, encryption, and LVM flags) without modifying real disks
-- Runs in a safe, isolated environment without performing destructive changes
+## Test and dry-run modes
 
-#### Test Modes
+`--dry-run` prints the commands and file writes that would be performed without mutating the host:
 
-The `install-arch.sh` script supports special modes for testing:
-
-**Dry-Run Mode**: Simulates operations without making changes
 ```bash
 ./install-arch.sh --dry-run --test-mode
 ```
 
-**Test Mode**: Uses environment variables instead of interactive prompts
+`--test-mode` bypasses interactive prompts and reads values from environment variables:
+
 ```bash
-export TEST_MODE_MODE="1"
-export TEST_MODE_HOSTNAME="testhost"
-export TEST_MODE_USER="testuser"
-export TEST_MODE_PASSWORD="testpass"
-export TEST_MODE_DEVICE="/dev/loop0"
-export TEST_MODE_LUKS_PASSWORD="lukspass"
-./install-arch.sh --test-mode
+TEST_MODE_MODE="1" \
+TEST_MODE_HOSTNAME="testhost" \
+TEST_MODE_USER="testuser" \
+TEST_MODE_PASSWORD="testpass123" \
+TEST_MODE_DEVICE="/dev/loop0" \
+TEST_MODE_LUKS_PASSWORD="lukspass123" \
+./install-arch.sh --test-mode --dry-run
 ```
 
-### CI/CD
+For desktop dry runs, `TEST_MODE_VIDEO_DRIVER` can be set to `nvidia-open`, `nvidia`, or left empty.
 
-This repository uses GitHub Actions for continuous integration:
-* **ShellCheck Analysis**: Validates shell script quality and catches common errors
-* **Unit Tests**: Runs the full unit test suite on every push/PR
-* **Integration Test**: Simulates installation in a Docker container with loop devices
-* **Arch Linux Testing**: Verifies script runs in an Arch Linux container
-* **Syntax Validation**: Ensures script has no syntax errors
+## Development
 
-Run checks locally:
+Run the smallest check that covers your change:
+
 ```bash
-# Check script syntax
-bash -n install-arch.sh
-
-# Run shellcheck (requires shellcheck package)
-shellcheck install-arch.sh
-
-# Run all tests
+bash -n install-arch.sh test/*.sh
+shellcheck install-arch.sh test/*.sh
 ./test/unit_tests.sh
-sudo ./test/integration_test.sh  # Requires root
 ```
 
-### Contributing
-
-Contributions are welcome! Please:
-
-1. **Read the guidelines**: See [.github/copilot-instructions.md](.github/copilot-instructions.md) for detailed shell scripting guidelines and code standards
-2. **Fork and branch**: Create a feature branch from `main`
-3. **Follow conventions**:
-   - Shell script best practices (quote variables, use set options)
-   - ShellCheck must pass with no warnings
-   - Follow existing code style
-4. **Test thoroughly**:
-    - Run unit tests: `./test/unit_tests.sh`
-    - Run integration tests: `sudo ./test/integration_test.sh`
-   - Test in a VM for destructive changes
-5. **Submit a PR**: Use the pull request template and fill out all sections
-6. **Be patient**: Reviews may take time, especially for security-critical changes
-
-### Code Standards
-
-- All shell scripts must pass ShellCheck analysis
-- Quote all variables to prevent word splitting
-- Use `set -o errexit`, `set -o nounset`, `set -o pipefail`
-- Add error traps with line numbers
-- Validate all user input
-- Test in isolated environments (never on production systems)
-- Document complex logic with comments
-- Keep changes minimal and focused
-
-### Development Workflow
+The integration test requires root and a system where loop devices are available:
 
 ```bash
-# Clone the repository
-git clone https://github.com/sneivandt/install-arch.git
-cd install-arch
-
-# Create a feature branch
-git checkout -b feature/my-feature
-
-# Make changes and test
-./test/unit_tests.sh                     # Unit tests
-sudo ./test/integration_test.sh          # Integration tests
-shellcheck install-arch.sh               # ShellCheck analysis
-bash -n install-arch.sh                  # Syntax check
-
-# Test in a VM
-# (Use VirtualBox, QEMU, or your preferred virtualization)
-
-# Commit and push
-git add .
-git commit -m "feat: Add new feature"
-git push origin feature/my-feature
-
-# Open a pull request on GitHub
+sudo ./test/integration_test.sh
 ```
+
+Current CI runs ShellCheck, unit tests, a privileged Arch container integration test, syntax checks, executable permission checks, and dry-run flag coverage. The integration test creates a loop-backed disk image and exercises dry-run/test-mode behavior; it does not perform a full Arch installation with real `pacstrap` and `arch-chroot` execution.
