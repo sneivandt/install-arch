@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/sneivandt/install-arch/actions/workflows/ci.yml/badge.svg)](https://github.com/sneivandt/install-arch/actions/workflows/ci.yml)
 
-`install-arch.sh` is an opinionated, semi-interactive Arch Linux installer for a fresh UEFI machine. It provisions an encrypted LVM system, installs a practical CLI or Hyprland workstation package set, creates the primary user, applies dotfiles, configures boot, and leaves the system ready for first boot.
+[`install-arch.sh`](install-arch.sh) is an opinionated, semi-interactive Arch Linux installer for a fresh UEFI machine. It provisions an encrypted LVM system, installs a practical CLI or Hyprland workstation package set, creates the primary user, applies dotfiles, configures boot, and leaves the system ready for first boot.
 
 It is designed for one specific installation style rather than every possible Arch layout: full-disk install, LUKS2 encryption, LVM root/swap, GRUB on UEFI, NetworkManager, systemd-resolved, UFW, fail2ban, Docker, zsh, and the author's dotfiles.
 
@@ -141,10 +141,12 @@ shellcheck install-arch.sh test/*.sh
 ./test/unit_tests.sh
 ```
 
+[`test/unit_tests.sh`](test/unit_tests.sh) covers validation helpers, package-list naming, script syntax, executable permissions, and dry-run dotfiles bootstrap output.
+
 The integration test requires root and a system where loop devices are available:
 
 ```bash
 sudo ./test/integration_test.sh
 ```
 
-Current CI runs ShellCheck, unit tests, a privileged Arch container integration test, syntax checks, executable permission checks, and dry-run flag coverage. The integration test creates a loop-backed disk image and exercises dry-run/test-mode behavior; it does not perform a full Arch installation with real `pacstrap` and `arch-chroot` execution.
+Current CI runs ShellCheck, unit tests, a privileged Arch container integration test, syntax checks, executable permission checks, and dry-run flag coverage. [`test/integration_test.sh`](test/integration_test.sh) creates a loop-backed disk image and exercises dry-run/test-mode behavior; it does not perform a full Arch installation with real `pacstrap` and `arch-chroot` execution.
