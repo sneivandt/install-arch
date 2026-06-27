@@ -1,4 +1,4 @@
-# Copilot Instructions for install-arch
+# Agent Instructions for install-arch
 
 ## Repository context
 
@@ -23,7 +23,7 @@ leave a machine unbootable.
 
 ## Repo-specific skills
 
-Detailed guidance is split into focused skills under `.github/skills/`:
+Detailed guidance is split into focused skills under `.agents/skills/`:
 
 - `arch-installer-safety`: use when changing disk, encryption, LVM, boot,
   chroot, sudo, user, service, or other safety-sensitive installer behavior.
@@ -41,10 +41,12 @@ Detailed guidance is split into focused skills under `.github/skills/`:
 │   ├── unit_tests.sh
 │   ├── integration_test.sh
 │   └── test_helpers.sh
+├── .agents/
+│   └── skills/
 ├── .github/
 │   ├── workflows/ci.yml
-│   ├── skills/
-│   └── copilot-instructions.md
+│   └── pull_request_template.md
+├── AGENTS.md
 └── README.md
 ```
 
