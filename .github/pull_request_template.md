@@ -39,7 +39,7 @@
 <!-- Provide details about your testing approach -->
 
 ## Shell Script Quality (if applicable)
-<!-- Verify these requirements from copilot-instructions.md -->
+<!-- Verify these requirements from AGENTS.md -->
 - [ ] All variables are properly quoted
 - [ ] Error handling is in place (set -e, set -u, set -o pipefail)
 - [ ] Trap handlers are used for error reporting
