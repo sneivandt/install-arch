@@ -208,16 +208,13 @@ get_target_size_bytes() {
   local target_device="$1"
   local size_bytes=""
 
-  if [ "$TEST_MODE" = "true" ] && [ "$DRY_RUN" = "true" ] &&
-    [ -n "${TEST_MODE_DEVICE_SIZE_BYTES:-}" ]; then
-    size_bytes="$TEST_MODE_DEVICE_SIZE_BYTES"
+  if [ "$TEST_MODE" = "true" ] && [ "$DRY_RUN" = "true" ]; then
+    size_bytes="${TEST_MODE_DEVICE_SIZE_BYTES:-$((20 * 1024 * 1024 * 1024))}"
   elif [ -b "$target_device" ]; then
     if ! size_bytes="$(blockdev --getsize64 "$target_device")"; then
       echo "Error: Unable to determine the size of target device '$target_device'." >&2
       return 1
     fi
-  elif [ "$TEST_MODE" = "true" ] && [ "$DRY_RUN" = "true" ]; then
-    size_bytes=$((20 * 1024 * 1024 * 1024))
   else
     echo "Error: Unable to determine the size of target device '$target_device'." >&2
     return 1
