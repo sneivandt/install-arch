@@ -1,123 +1,131 @@
 # install-arch
 
-[![CI](https://github.com/sneivandt/install-arch/actions/workflows/ci.yml/badge.svg)](https://github.com/sneivandt/install-arch/actions/workflows/ci.yml)
+An opinionated, semi-interactive installer for a fresh Arch Linux system. It
+creates an encrypted LVM installation, configures GRUB, creates a primary user,
+and installs either a CLI environment or a Hyprland workstation.
 
-[`install-arch.sh`](install-arch.sh) is an opinionated, semi-interactive Arch Linux installer for a fresh UEFI machine. It provisions an encrypted LVM system, installs a practical CLI or Hyprland workstation package set, creates the primary user, applies dotfiles, configures boot, and leaves the system ready for first boot.
+This project targets one specific setup. It is not a general-purpose Arch
+installer.
 
-It is designed for one specific installation style rather than every possible Arch layout: full-disk install, LUKS2 encryption, LVM root/swap, GRUB on UEFI, NetworkManager, systemd-resolved, UFW, fail2ban, Docker, zsh, and the author's dotfiles.
-
-> [!WARNING]
-> This installer permanently erases the selected target disk. It does not support preserving existing partitions, dual boot, or in-place upgrades.
-
-## Quick start
-
-Boot the Arch Linux live ISO in UEFI mode, connect to the internet, then run from the root shell:
-
-```bash
-curl -sL https://git.io/vpvGR | bash
-```
-
-The installer prompts for install mode, hostname, username, user password, target disk, disk encryption password, and NVIDIA driver choice when NVIDIA hardware is detected in a desktop mode. Runtime logs are written to `stdout.log` and `stderr.log` after password collection is complete.
-
-## Install modes
-
-| Mode | Use when | Adds |
-| --- | --- | --- |
-| `1` Minimal | You want a fast CLI-first system | Base Arch packages, development tools, modern terminal utilities, Docker, zsh, and the `base` dotfiles profile |
-| `2` Workstation | You want the full desktop setup | Minimal mode plus Hyprland, Wayland desktop utilities, Chromium, audio tools, fonts, themes, optional NVIDIA driver, and the `desktop` dotfiles profile |
-| `3` VirtualBox | You want the workstation setup inside VirtualBox | Workstation mode plus `virtualbox-guest-utils` and `vboxservice.service` |
-
-## What it installs
-
-The base package set includes:
-
-- **System:** `base`, `base-devel`, `linux`, `linux-lts`, headers for both kernels, `linux-firmware`, `grub`, `efibootmgr`, `lvm2`, `sudo`
-- **Security and networking:** `networkmanager`, `openssh`, `ufw`, `fail2ban`, `reflector`, `pacman-contrib`
-- **Development and CLI tools:** `git`, `curl`, `wget`, `neovim`, `vim`, `tmux`, `shellcheck`, `rustup`, `jq`, `ctags`
-- **Modern terminal utilities:** `bat`, `btop`, `duf`, `eza`, `fd`, `fzf`, `git-delta`, `lazygit`, `ripgrep`, `zoxide`
-- **Shell:** `zsh`, `zsh-autosuggestions`, `zsh-completions`, `zsh-syntax-highlighting`, with `dash` linked as `/bin/sh`
-
-Desktop modes add Hyprland and the surrounding Wayland stack: `hyprland`, `uwsm`, `waybar`, `alacritty`, `fuzzel`, `mako`, `hyprpaper`, `hyprlock`, `hypridle`, `grim`, `slurp`, `wl-clipboard`, `gammastep`, `playerctl`, `chromium`, `alsa-utils`, `qt5-wayland`, `qt6-wayland`, `xorg-xwayland`, `otf-font-awesome`, and `papirus-icon-theme`.
-
-When CPU vendor detection succeeds, the installer also adds `intel-ucode` or `amd-ucode`.
-
-## Disk layout
-
-For a target such as `/dev/sda`, the installer creates:
-
-| Device | Purpose |
-| --- | --- |
-| `/dev/sda1` | 512 MiB EFI system partition, FAT32, mounted at `/boot` |
-| `/dev/sda2` | LUKS2 container opened as `/dev/mapper/cryptlvm` |
-| `volgroup0/swap` | 1 GiB swap logical volume |
-| `volgroup0/root` | Ext4 root logical volume using the remaining space |
-
-GRUB is installed for `x86_64-efi` and configured with `cryptdevice=UUID=<luks-partition-uuid>:cryptlvm root=/dev/mapper/volgroup0-root`. Both `linux` and `linux-lts` initramfs images are built with encryption and LVM hooks.
-
-## System configuration
-
-After package installation, the script configures:
-
-- Hostname, `/etc/hosts`, `en_US.UTF-8`, and timezone `US/Pacific`
-- NetworkManager with DNS delegated to systemd-resolved
-- systemd-resolved using Google DNS, Cloudflare fallback DNS, DNSSEC `allow-downgrade`, and opportunistic DNS-over-TLS
-- UFW defaults: deny incoming, allow outgoing, then enable firewall
-- fail2ban for SSH using the systemd journal backend
-- Weekly reflector mirror updates and weekly fstrim
-- Pacman color/candy, a package-cache cleanup hook keeping the last five package versions, and a hook that keeps `/bin/sh` linked to `dash`
-- Baseline kernel and network hardening in `/etc/sysctl.d/99-security.conf`
-- A primary user in the `wheel` and `docker` groups with zsh as the login shell
-- Locked root password and `/sbin/nologin` for the root account
-- Password-required sudo for `wheel` after dotfiles bootstrap finishes
-
-## Dotfiles
-
-The installer integrates with [sneivandt/dotfiles](https://github.com/sneivandt/dotfiles). It clones the repository to `/home/<user>/src/dotfiles`, validates the selected profile, then applies it as the target user:
-
-| Install mode | Dotfiles profile |
-| --- | --- |
-| Minimal | `base` |
-| Workstation | `desktop` |
-| VirtualBox | `desktop` |
-
-The installer temporarily grants passwordless sudo to `wheel` while dotfiles are applied, removes that temporary sudoers file afterward, and replaces it with normal password-required `wheel` sudo.
+> [!CAUTION]
+> The installer erases the entire selected disk. It does not support dual boot,
+> preserving existing partitions, or upgrading an existing system.
 
 ## Requirements
 
-- Arch Linux live ISO booted in UEFI mode
-- Root privileges
-- Working internet connection
-- One whole target disk of at least 10 GiB, with 20 GiB or more recommended
-- No requirement to preserve data on the target disk
+Run the installer from the Arch Linux live ISO with:
 
-Before starting, confirm the live ISO is booted in UEFI mode:
+- UEFI boot mode
+- Root access
+- A working internet connection
+- A dedicated target disk of at least 10 GiB (20 GiB or more recommended)
+- Nothing mounted at `/mnt`
+
+Confirm that the live ISO was booted in UEFI mode:
 
 ```bash
 test -d /sys/firmware/efi/efivars && echo "UEFI mode confirmed"
 ```
 
-## Customizing before install
-
-This project intentionally bakes in personal defaults. Review and edit `install-arch.sh` before running if you want different values for:
-
-- Timezone: `US/Pacific`
-- Mirror country: `US`
-- Swap size: `1G`
-- DNS servers and DNSSEC/DNS-over-TLS policy
-- Package arrays: `packages`, `packages_gui`, `packages_vbox`
-- Enabled services and firewall rules
-- Sysctl hardening settings
-- Dotfiles repository, install path, or profile mapping
-
-## Test and dry-run modes
-
-`--dry-run` prints the commands and file writes that would be performed without mutating the host:
+Review the available disks before continuing:
 
 ```bash
-./install-arch.sh --dry-run --test-mode
+lsblk -d -o NAME,SIZE,MODEL
 ```
 
-`--test-mode` bypasses interactive prompts and reads values from environment variables:
+## Run the installer
+
+From the root shell in the live environment:
+
+```bash
+curl -fsSL https://git.io/vpvGR | bash
+```
+
+The installer asks for:
+
+1. Install mode
+2. Hostname
+3. Username and password
+4. Target disk
+5. Disk encryption password
+6. NVIDIA driver, when supported hardware is detected in a desktop mode
+
+Before changing the disk, it shows the selected device and requires
+confirmation. After passwords have been collected, output is written to
+`stdout.log` and `stderr.log` in the current directory.
+
+## Install modes
+
+| Mode | Description | Dotfiles profile |
+| --- | --- | --- |
+| `1` Minimal | CLI system with development tools, Docker, zsh, and modern terminal utilities | `base` |
+| `2` Workstation | Minimal mode plus Hyprland, Wayland utilities, Chromium, audio tools, fonts, and optional NVIDIA drivers | `desktop` |
+| `3` VirtualBox | Workstation mode plus VirtualBox guest utilities and `vboxservice.service` | `desktop` |
+
+All modes install both the `linux` and `linux-lts` kernels. The installer also
+adds Intel or AMD microcode when it can identify the CPU vendor.
+
+Package definitions are maintained in the `BASE_PACKAGES`, `GUI_PACKAGES`, and
+`VBOX_PACKAGES` arrays in [`install-arch.sh`](install-arch.sh).
+
+## Disk layout
+
+For a disk such as `/dev/sda`, the installer creates:
+
+| Device | Purpose |
+| --- | --- |
+| `/dev/sda1` | 512 MiB FAT32 EFI system partition mounted at `/boot` |
+| `/dev/sda2` | LUKS2 encrypted partition opened as `cryptlvm` |
+| `volgroup0/swap` | 1 GiB swap logical volume |
+| `volgroup0/root` | Ext4 root logical volume using the remaining space |
+
+NVMe, MMC, and loop devices use partition names such as `/dev/nvme0n1p1`.
+
+GRUB is installed for UEFI and configured to unlock the encrypted LVM root
+volume during boot.
+
+## System configuration
+
+The installer configures:
+
+- NetworkManager and systemd-resolved
+- UFW and fail2ban
+- Weekly reflector and filesystem trim timers
+- Pacman package-cache cleanup
+- Baseline kernel and network hardening
+- A primary user in the `wheel` and `docker` groups
+- zsh as the user's login shell
+- A locked root account
+
+It clones [sneivandt/dotfiles](https://github.com/sneivandt/dotfiles) to
+`/home/<user>/src/dotfiles`, validates the profile for the selected mode, and
+then applies it as the new user. Passwordless `wheel` sudo is enabled only
+during this bootstrap; normal password-required sudo is restored afterward.
+
+## Opinionated defaults
+
+Review [`install-arch.sh`](install-arch.sh) before installing if you want to
+change any of these defaults:
+
+| Setting | Default |
+| --- | --- |
+| Timezone | `US/Pacific` |
+| Mirror country | `US` |
+| Swap size | `1G` |
+| Bootloader | GRUB |
+| Encryption | LUKS2 with LVM |
+| DNS | Google DNS with Cloudflare fallback |
+| Desktop | Hyprland on Wayland |
+| Dotfiles | `sneivandt/dotfiles` |
+
+The script also contains the enabled services, firewall policy, sysctl
+settings, package lists, and dotfiles profile mapping.
+
+## Dry run and test mode
+
+`--dry-run` skips the installer's disk and target-system changes. Combine it
+with `--test-mode` to avoid interactive setup and supply test values.
+`--test-mode` requires `--dry-run` by default:
 
 ```bash
 TEST_MODE_MODE="1" \
@@ -129,11 +137,28 @@ TEST_MODE_LUKS_PASSWORD="lukspass123" \
 ./install-arch.sh --test-mode --dry-run
 ```
 
-For desktop dry runs, `TEST_MODE_VIDEO_DRIVER` can be set to `nvidia-open`, `nvidia`, or left empty.
+For workstation and VirtualBox dry runs, set `TEST_MODE_VIDEO_DRIVER` to
+`nvidia-open`, `nvidia`, or an empty value.
+
+Destructive test mode is reserved for disposable loop devices. It requires
+every `TEST_MODE_*` value plus an explicit opt-in:
+
+```bash
+sudo TEST_MODE_MODE="1" \
+  TEST_MODE_HOSTNAME="testhost" \
+  TEST_MODE_USER="testuser" \
+  TEST_MODE_PASSWORD="testpass123" \
+  TEST_MODE_DEVICE="/dev/loop0" \
+  TEST_MODE_LUKS_PASSWORD="lukspass123" \
+  ./install-arch.sh --test-mode --allow-destructive-test-mode
+```
+
+Never use that flag with a physical disk. The installer rejects non-loop
+devices in destructive test mode.
 
 ## Development
 
-Run the smallest check that covers your change:
+Run the local checks with:
 
 ```bash
 bash -n install-arch.sh test/*.sh
@@ -141,12 +166,14 @@ shellcheck install-arch.sh test/*.sh
 ./test/unit_tests.sh
 ```
 
-[`test/unit_tests.sh`](test/unit_tests.sh) covers validation helpers, package-list naming, script syntax, executable permissions, and dry-run dotfiles bootstrap output.
-
-The integration test requires root and a system where loop devices are available:
+The loop-device integration test requires root:
 
 ```bash
 sudo ./test/integration_test.sh
 ```
 
-Current CI runs ShellCheck, unit tests, a privileged Arch container integration test, syntax checks, executable permission checks, and dry-run flag coverage. [`test/integration_test.sh`](test/integration_test.sh) creates a loop-backed disk image and exercises dry-run/test-mode behavior; it does not perform a full Arch installation with real `pacstrap` and `arch-chroot` execution.
+Unit tests source the production installer helpers and package arrays instead
+of maintaining test-only copies. The integration test creates an isolated loop
+device, exercises dry-run and test-mode behavior, and cleans up only the loop
+device and temporary image it created. It does not run a complete installation
+with real `pacstrap` and `arch-chroot` operations.

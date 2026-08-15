@@ -20,23 +20,36 @@ set -o pipefail
 
 DRY_RUN=false
 TEST_MODE=false
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --dry-run)
-      DRY_RUN=true
-      shift
-      ;;
-    --test-mode)
-      TEST_MODE=true
-      shift
-      ;;
-    *)
-      echo "Unknown option: $1"
-      echo "Usage: $0 [--dry-run] [--test-mode]"
-      exit 1
-      ;;
-  esac
-done
+ALLOW_DESTRUCTIVE_TEST_MODE=false
+INSTALL_OPENED_LUKS=false
+INSTALL_CREATED_VG=false
+INSTALL_ENABLED_SWAP=false
+INSTALL_MOUNTED_ROOT=false
+TEMP_SUDOERS_CREATED=false
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dry-run)
+        DRY_RUN=true
+        shift
+        ;;
+      --test-mode)
+        TEST_MODE=true
+        shift
+        ;;
+      --allow-destructive-test-mode)
+        ALLOW_DESTRUCTIVE_TEST_MODE=true
+        shift
+        ;;
+      *)
+        echo "Unknown option: $1"
+        echo "Usage: $0 [--dry-run] [--test-mode] [--allow-destructive-test-mode]"
+        exit 1
+        ;;
+    esac
+  done
+}
 
 error_handler() {
   local exit_code=$?
@@ -50,38 +63,229 @@ cleanup() {
   fi
 
   set +o errexit
-  swapoff /dev/mapper/volgroup0-swap 2>/dev/null || true
-  if mountpoint -q /mnt 2>/dev/null; then
+  if [ "$TEMP_SUDOERS_CREATED" = "true" ] &&
+    [ "$INSTALL_MOUNTED_ROOT" = "true" ] &&
+    mountpoint -q /mnt 2>/dev/null; then
+    rm -f /mnt/etc/sudoers.d/00-installer-wheel-nopasswd
+  fi
+  if [ "$INSTALL_ENABLED_SWAP" = "true" ]; then
+    swapoff /dev/mapper/volgroup0-swap 2>/dev/null || true
+  fi
+  if [ "$INSTALL_MOUNTED_ROOT" = "true" ] && mountpoint -q /mnt 2>/dev/null; then
     umount -R /mnt 2>/dev/null || true
   fi
-  if [ -e /dev/volgroup0/root ] || [ -e /dev/mapper/volgroup0-root ]; then
+  if [ "$INSTALL_CREATED_VG" = "true" ]; then
     vgchange -an volgroup0 2>/dev/null || true
   fi
-  if [ -e /dev/mapper/cryptlvm ]; then
+  if [ "$INSTALL_OPENED_LUKS" = "true" ]; then
     cryptsetup close cryptlvm 2>/dev/null || true
   fi
 }
 
-# Report the failing command and release any partially-mounted target system.
-trap error_handler ERR
-trap cleanup EXIT
+require_destructive_test_variables() {
+  local variable_name
+  local required_variables=(
+    TEST_MODE_MODE
+    TEST_MODE_HOSTNAME
+    TEST_MODE_USER
+    TEST_MODE_PASSWORD
+    TEST_MODE_DEVICE
+    TEST_MODE_LUKS_PASSWORD
+  )
 
-# The interactive path depends on dialog before package installation begins.
-if [ "$TEST_MODE" = "false" ]; then
-  if [ "$EUID" -ne 0 ]; then
-    echo "Error: This installer must be run as root from the Arch Linux live ISO."
+  for variable_name in "${required_variables[@]}"; do
+    if [ -z "${!variable_name:-}" ]; then
+      echo "Error: $variable_name must be set for destructive test mode."
+      exit 1
+    fi
+  done
+}
+
+initialize_runtime() {
+  parse_args "$@"
+
+  # Report the failing command and release resources acquired by this run.
+  trap error_handler ERR
+  trap cleanup EXIT
+
+  if [ "$ALLOW_DESTRUCTIVE_TEST_MODE" = "true" ] &&
+    { [ "$TEST_MODE" != "true" ] || [ "$DRY_RUN" = "true" ]; }; then
+    echo "Error: --allow-destructive-test-mode requires --test-mode without --dry-run."
     exit 1
   fi
-  if [ "$DRY_RUN" = "false" ] && [ ! -d /sys/firmware/efi/efivars ]; then
-    echo "Error: UEFI boot mode is required. Reboot the installer media in UEFI mode."
-    exit 1
+
+  if [ "$TEST_MODE" = "true" ] && [ "$DRY_RUN" = "false" ]; then
+    if [ "$ALLOW_DESTRUCTIVE_TEST_MODE" != "true" ]; then
+      echo "Error: --test-mode requires --dry-run unless --allow-destructive-test-mode is explicitly set."
+      exit 1
+    fi
+    require_destructive_test_variables
   fi
-  if ! pacman -Sy --noconfirm dialog; then
-    echo "Error: Failed to install dialog. Cannot proceed with interactive installation."
-    echo "Check your internet connection and try again."
-    exit 1
+
+  # The interactive path depends on dialog before package installation begins.
+  if [ "$TEST_MODE" = "false" ]; then
+    if [ "$EUID" -ne 0 ]; then
+      echo "Error: This installer must be run as root from the Arch Linux live ISO."
+      exit 1
+    fi
+    if [ "$DRY_RUN" = "false" ] && [ ! -d /sys/firmware/efi/efivars ]; then
+      echo "Error: UEFI boot mode is required. Reboot the installer media in UEFI mode."
+      exit 1
+    fi
+    if ! pacman -Sy --noconfirm dialog; then
+      echo "Error: Failed to install dialog. Cannot proceed with interactive installation."
+      echo "Check your internet connection and try again."
+      exit 1
+    fi
   fi
-fi
+}
+
+validate_mode() {
+  local selected_mode="$1"
+  [[ "$selected_mode" =~ ^[1-3]$ ]]
+}
+
+validate_hostname() {
+  local selected_hostname="$1"
+  [[ "$selected_hostname" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]
+}
+
+validate_username() {
+  local selected_user="$1"
+  [[ "$selected_user" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]
+}
+
+validate_package_name() {
+  local package_name="$1"
+  [[ "$package_name" =~ ^[a-zA-Z0-9][a-zA-Z0-9._+-]*$ ]]
+}
+
+validate_video_driver() {
+  local selected_driver="$1"
+  [ -z "$selected_driver" ] ||
+    [ "$selected_driver" = "nvidia-open" ] ||
+    [ "$selected_driver" = "nvidia" ]
+}
+
+get_device_prefix() {
+  local target_device="$1"
+  local device_prefix=""
+
+  case "$target_device" in
+    "/dev/nvme"*|"/dev/mmcblk"*|"/dev/loop"*) device_prefix="p" ;;
+  esac
+  printf '%s\n' "$device_prefix"
+}
+
+get_partition_name() {
+  local target_device="$1"
+  local partition_number="$2"
+  local device_prefix
+
+  device_prefix="$(get_device_prefix "$target_device")"
+  printf '%s%s%s\n' "$target_device" "$device_prefix" "$partition_number"
+}
+
+hash_password() {
+  local plaintext_password="$1"
+  local password_hash
+
+  if [[ "$plaintext_password" == *$'\n'* || "$plaintext_password" == *$'\r'* ]]; then
+    echo "Error: Passwords cannot contain newline characters." >&2
+    return 1
+  fi
+
+  if ! password_hash="$(printf '%s\n' "$plaintext_password" | openssl passwd -6 -stdin)"; then
+    echo "Error: Failed to hash the user password." >&2
+    return 1
+  fi
+  if [[ "$password_hash" != \$6\$* ]] || [ "${#password_hash}" -lt 20 ]; then
+    echo "Error: Password hashing returned an invalid SHA-512 hash." >&2
+    return 1
+  fi
+
+  printf '%s\n' "$password_hash"
+}
+
+BASE_PACKAGES=(
+  base
+  base-devel
+  bat
+  btop
+  ctags
+  curl
+  dash
+  docker
+  duf
+  efibootmgr
+  eza
+  fail2ban
+  fd
+  fzf
+  git
+  git-delta
+  grub
+  jq
+  lazygit
+  linux
+  linux-firmware
+  linux-headers
+  linux-lts
+  linux-lts-headers
+  lvm2
+  man-db
+  man-pages
+  networkmanager
+  neovim
+  openssh
+  pacman-contrib
+  reflector
+  ripgrep
+  sed
+  shellcheck
+  rustup
+  sudo
+  tmux
+  ufw
+  util-linux
+  vim
+  wget
+  xdg-user-dirs
+  zip
+  zoxide
+  zsh
+  zsh-autosuggestions
+  zsh-completions
+  zsh-syntax-highlighting
+)
+
+GUI_PACKAGES=(
+  alacritty
+  alsa-utils
+  chromium
+  gammastep
+  grim
+  hyprland
+  hypridle
+  hyprlock
+  hyprpaper
+  mako
+  otf-font-awesome
+  papirus-icon-theme
+  playerctl
+  qt5-wayland
+  qt6-wayland
+  slurp
+  uwsm
+  waybar
+  wl-clipboard
+  fuzzel
+  xorg-xwayland
+)
+
+VBOX_PACKAGES=(
+  virtualbox-guest-utils
+)
 
 # Command helpers keep dry-run output and chroot execution consistent.
 run_cmd() {
@@ -163,6 +367,7 @@ run_preflight_checks() {
     mkfs.vfat
     mkswap
     mount
+    mountpoint
     openssl
     pacman
     pacstrap
@@ -190,6 +395,11 @@ run_preflight_checks() {
   for command_name in "${required_commands[@]}"; do
     require_command "$command_name"
   done
+
+  if mountpoint -q /mnt; then
+    echo "Error: /mnt is already mounted. Unmount it before running the installer."
+    exit 1
+  fi
 
   if command -v timedatectl >/dev/null 2>&1; then
     if ! timedatectl set-ntp true; then
@@ -280,6 +490,11 @@ wait_for_block_device() {
   exit 1
 }
 
+if [ -n "${BASH_SOURCE[0]:-}" ] && [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
+
+initialize_runtime "$@"
 run_preflight_checks
 
 # Input and validation
@@ -290,7 +505,7 @@ if [ "$TEST_MODE" = "true" ]; then
 else
   mode=$(dialog --stdout --clear --menu "Select install mode" 0 0 0 "1" "Minimal" "2" "Workstation" "3" "VirtualBox") || exit 1
 fi
-if [[ ! "$mode" =~ ^[1-3]$ ]]; then
+if ! validate_mode "$mode"; then
   echo "Error: Invalid mode '$mode'. Must be 1, 2, or 3."
   exit 1
 fi
@@ -302,7 +517,7 @@ else
 fi
 [ -z "$hostname" ] && echo "hostname cannot be empty" && exit 1
 hostname="${hostname,,}"
-if [[ ! "$hostname" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
+if ! validate_hostname "$hostname"; then
   echo "Error: Invalid hostname '$hostname'. Must be lowercase alphanumeric with optional hyphens, 1-63 characters."
   exit 1
 fi
@@ -313,7 +528,7 @@ else
   user=$(dialog --stdout --clear --inputbox "Enter username" 0 40) || exit 1
 fi
 [ -z "$user" ] && echo "username cannot be empty" && exit 1
-if [[ ! "$user" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
+if ! validate_username "$user"; then
   echo "Error: Invalid username '$user'. Must start with lowercase letter or underscore, 1-32 characters, lowercase alphanumeric/underscore/hyphen only."
   exit 1
 fi
@@ -327,6 +542,11 @@ else
 fi
 [ -z "$password1" ] && echo "password cannot be empty" && exit 1
 if [ "$password1" != "$password2" ]; then echo "Passwords did not match"; exit 1; fi
+password_hash=""
+if [ "$DRY_RUN" = "false" ]; then
+  password_hash="$(hash_password "$password1")"
+fi
+unset password1 password2
 
 if [ "$TEST_MODE" = "true" ]; then
   device="${TEST_MODE_DEVICE:-/dev/loop0}"
@@ -350,15 +570,17 @@ else
   device=$(dialog --stdout --clear --menu "Select installation disk" 0 0 0 "${device_options[@]}") || exit 1
 fi
 validate_target_device "$device"
+if [ "$TEST_MODE" = "true" ] && [ "$DRY_RUN" = "false" ]; then
+  if [ "$(lsblk -dn -o TYPE "$device")" != "loop" ]; then
+    echo "Error: Destructive test mode only supports loop devices."
+    exit 1
+  fi
+fi
 confirm_destructive_action "$device"
 ensure_install_names_available
 
-dpfx=""
-case "$device" in
-  "/dev/nvme"*|"/dev/mmcblk"*|"/dev/loop"*) dpfx="p" ;;
-esac
-part_efi="${device}${dpfx}1"
-part_luks="${device}${dpfx}2"
+part_efi="$(get_partition_name "$device" 1)"
+part_luks="$(get_partition_name "$device" 2)"
 
 if [ "$TEST_MODE" = "true" ]; then
   password_luks1="${TEST_MODE_LUKS_PASSWORD:-lukspass123}"
@@ -383,6 +605,10 @@ if [ "$mode" -eq 2 ] || [ "$mode" -eq 3 ]; then
     if [ "$video_driver" = "none" ]; then
       video_driver=""
     fi
+  fi
+  if ! validate_video_driver "$video_driver"; then
+    echo "Error: Invalid video driver '$video_driver'. Expected nvidia-open, nvidia, or an empty value."
+    exit 1
   fi
 fi
 
@@ -421,11 +647,15 @@ if [ "$DRY_RUN" = "true" ]; then
   dry_run_msg "Would open LUKS device $part_luks as cryptlvm"
 else
   printf '%s' "$password_luks1" | cryptsetup open --key-file - "$part_luks" cryptlvm
+  INSTALL_OPENED_LUKS=true
   unset password_luks1 password_luks2
 fi
 
 run_cmd pvcreate --yes --force /dev/mapper/cryptlvm
 run_cmd vgcreate volgroup0 /dev/mapper/cryptlvm
+if [ "$DRY_RUN" = "false" ]; then
+  INSTALL_CREATED_VG=true
+fi
 
 run_cmd lvcreate -L 1G volgroup0 -n swap
 run_cmd lvcreate -l 100%FREE volgroup0 -n root
@@ -435,7 +665,13 @@ run_cmd mkfs.ext4 -F /dev/mapper/volgroup0-root
 run_cmd mkfs.vfat -F32 -n EFI "$part_efi"
 
 run_cmd mount /dev/mapper/volgroup0-root /mnt
+if [ "$DRY_RUN" = "false" ]; then
+  INSTALL_MOUNTED_ROOT=true
+fi
 run_cmd swapon /dev/mapper/volgroup0-swap
+if [ "$DRY_RUN" = "false" ]; then
+  INSTALL_ENABLED_SWAP=true
+fi
 run_cmd mkdir -p /mnt/boot
 run_cmd mount "$part_efi" /mnt/boot
 
@@ -467,90 +703,15 @@ if [ "$DRY_RUN" = "false" ] && [ "$TEST_MODE" = "false" ]; then
   fi
 fi
 
-packages=(
-  base \
-  base-devel \
-  bat \
-  btop \
-  ctags \
-  curl \
-  dash \
-  docker \
-  duf \
-  efibootmgr \
-  eza \
-  fail2ban \
-  fd \
-  fzf \
-  git \
-  git-delta \
-  grub \
-  jq \
-  lazygit \
-  linux \
-  linux-firmware \
-  linux-headers \
-  linux-lts \
-  linux-lts-headers \
-  lvm2 \
-  man-db \
-  man-pages \
-  networkmanager \
-  neovim \
-  openssh \
-  pacman-contrib \
-  reflector \
-  ripgrep \
-  sed \
-  shellcheck \
-  rustup \
-  sudo \
-  tmux \
-  ufw \
-  util-linux \
-  vim \
-  wget \
-  xdg-user-dirs \
-  zip \
-  zoxide \
-  zsh \
-  zsh-autosuggestions \
-  zsh-completions \
-  zsh-syntax-highlighting
-)
-
-packages_gui=(
-  alacritty \
-  alsa-utils \
-  chromium \
-  gammastep \
-  grim \
-  hyprland \
-  hypridle \
-  hyprlock \
-  hyprpaper \
-  mako \
-  otf-font-awesome \
-  papirus-icon-theme \
-  playerctl \
-  qt5-wayland \
-  qt6-wayland \
-  slurp \
-  uwsm \
-  waybar \
-  wl-clipboard \
-  fuzzel \
-  xorg-xwayland
-)
+packages=( "${BASE_PACKAGES[@]}" )
+packages_gui=( "${GUI_PACKAGES[@]}" )
 
 # Wayland uses mesa/nouveau by default; add NVIDIA only when explicitly selected.
 if [ -n "$video_driver" ]; then
   packages_gui=( "${packages_gui[@]}" "$video_driver" )
 fi
 
-packages_vbox=(
-  virtualbox-guest-utils
-)
+packages_vbox=( "${VBOX_PACKAGES[@]}" )
 
 if [ -n "$cpu_vendor" ]; then
   if [ "$cpu_vendor" = "intel" ]; then
@@ -765,10 +926,17 @@ EOF
 # User and dotfiles
 # Create the primary user, temporarily allow sudo for dotfiles, then require sudo passwords.
 
-in_target useradd -mU -G docker,wheel -s /bin/zsh -p "$(openssl passwd -6 "$password1")" "$user"
+if [ "$DRY_RUN" = "true" ]; then
+  dry_run_msg "Would create user $user with a SHA-512 password hash"
+else
+  in_target useradd -mU -G docker,wheel -s /bin/zsh -p "$password_hash" "$user"
+  unset password_hash
+fi
 in_target chsh -s /bin/zsh "$user"
-unset password1 password2
 
+if [ "$DRY_RUN" = "false" ]; then
+  TEMP_SUDOERS_CREATED=true
+fi
 write_file /mnt/etc/sudoers.d/00-installer-wheel-nopasswd <<'EOF'
 %wheel ALL=(ALL:ALL) NOPASSWD: ALL
 EOF
@@ -803,6 +971,7 @@ if [ "$DRY_RUN" = "true" ]; then
   dry_run_msg "Would remove /mnt/etc/sudoers.d/00-installer-wheel-nopasswd"
 else
   rm -f /mnt/etc/sudoers.d/00-installer-wheel-nopasswd
+  TEMP_SUDOERS_CREATED=false
 fi
 write_file /mnt/etc/sudoers.d/10-wheel <<'EOF'
 %wheel ALL=(ALL:ALL) ALL
@@ -851,6 +1020,10 @@ in_target grub-mkconfig -o /boot/grub/grub.cfg
 # Cleanup
 # Release resources explicitly; the EXIT trap handles failures before this point.
 run_cmd swapoff /dev/mapper/volgroup0-swap
+INSTALL_ENABLED_SWAP=false
 run_cmd umount -R /mnt
+INSTALL_MOUNTED_ROOT=false
 run_cmd vgchange -an volgroup0
+INSTALL_CREATED_VG=false
 run_cmd cryptsetup close cryptlvm
+INSTALL_OPENED_LUKS=false

@@ -1,143 +1,50 @@
 name: CI
 
 on:
+  push:
+    branches: [main]
   pull_request:
-    branches: [ main, master ]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  shellcheck:
-    name: ShellCheck Analysis
+  quality:
+    name: Syntax, ShellCheck, and unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Run syntax checks
+        run: bash -n install-arch.sh test/*.sh
 
       - name: Run ShellCheck
-        uses: ludeeus/action-shellcheck@master
-        with:
-          scandir: '.'
-          format: gcc
-          severity: warning
-
-  unit-tests:
-    name: Unit Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Make test scripts executable
-        run: chmod +x test/*.sh
+        run: shellcheck install-arch.sh test/*.sh
 
       - name: Run unit tests
         run: ./test/unit_tests.sh
 
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: unit-test-results
-          path: |
-            test/*.log
-          retention-days: 7
-
   integration-test:
-    name: Docker Integration Test
+    name: Arch Linux loop-device integration test
+    needs: quality
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     container:
       image: archlinux:latest
       options: --privileged
-    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Update system and install dependencies
-        run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm shellcheck dialog git curl lvm2 cryptsetup \
-            parted e2fsprogs dosfstools util-linux
-
-      - name: Make scripts executable
-        run: chmod +x test/*.sh install-arch.sh
+      - name: Update Arch Linux and install dependencies
+        run: pacman -Syu --noconfirm util-linux
 
       - name: Run integration test
         run: ./test/integration_test.sh
-
-      - name: Upload integration test logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: integration-test-logs
-          path: |
-            *.log
-            /tmp/test-*.log
-          retention-days: 7
-
-  test-script:
-    name: Test Script on Arch Linux
-    runs-on: ubuntu-latest
-    container:
-      image: archlinux:latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Update system and install dependencies
-        run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm shellcheck dialog git curl lvm2 cryptsetup parted
-
-      - name: Run shellcheck on install-arch.sh
-        run: shellcheck install-arch.sh
-
-      - name: Verify script syntax
-        run: bash -n install-arch.sh
-
-      - name: Check for required commands
-        run: |
-          echo "Checking for required commands in script..."
-          grep -E 'pacman|dialog|sfdisk|cryptsetup|lvcreate|arch-chroot' install-arch.sh
-
-      - name: Verify file permissions
-        run: |
-          if [ ! -x install-arch.sh ]; then
-            echo "Error: install-arch.sh is not executable"
-            exit 1
-          fi
-          echo "install-arch.sh is executable"
-
-      - name: Test help/usage patterns
-        run: |
-          # Verify the script doesn't error on basic invocations (it will fail on dialog, which is expected)
-          bash -n install-arch.sh && echo "Script syntax is valid"
-
-      - name: Test --dry-run and --test-mode flags
-        run: |
-          echo "Testing command line arguments..."
-          # Test invalid argument
-          if ./install-arch.sh --invalid-flag 2>&1 | grep -q "Unknown option"; then
-            echo "✓ Invalid flag correctly rejected"
-          else
-            echo "✗ Invalid flag handling failed"
-            exit 1
-          fi
-          # Test that the script accepts valid flags and runs to completion in dry-run
-          export TEST_MODE_MODE="1" TEST_MODE_HOSTNAME="test" TEST_MODE_USER="test"
-          export TEST_MODE_PASSWORD="test" TEST_MODE_DEVICE="/dev/loop0"
-          export TEST_MODE_LUKS_PASSWORD="test"
-          echo "Running script with test mode and dry-run..."
-          OUTPUT=$(./install-arch.sh --test-mode --dry-run 2>&1)
-          echo "Script output (first 500 chars):"
-          echo "$OUTPUT" | head -c 500
-          echo ""
-          echo "Checking for [DRY-RUN] in output..."
-          if echo "$OUTPUT" | grep -q "\[DRY-RUN\]"; then
-            echo "✓ Dry-run and test-mode flags working correctly"
-          else
-            echo "✗ Flag handling test failed - no [DRY-RUN] found in output"
-            echo "Full output:"
-            echo "$OUTPUT"
-            exit 1
-          fi
-

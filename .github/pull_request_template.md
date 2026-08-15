@@ -27,8 +27,8 @@
 <!-- Describe the tests you ran to verify your changes -->
 
 ### Checklist
-- [ ] Script passes syntax check (`bash -n install-arch.sh`)
-- [ ] ShellCheck analysis passes with no errors (`shellcheck install-arch.sh`)
+- [ ] Scripts pass syntax checks (`bash -n install-arch.sh test/*.sh`)
+- [ ] ShellCheck passes (`shellcheck install-arch.sh test/*.sh`)
 - [ ] Unit tests pass (`./test/unit_tests.sh`)
 - [ ] Integration tests pass (`sudo ./test/integration_test.sh`)
 - [ ] Tested in a VM or container (if applicable)
@@ -53,6 +53,8 @@
 - [ ] Passwords handled securely (if applicable)
 - [ ] No new security vulnerabilities introduced
 - [ ] Destructive operations have safeguards
+- [ ] Cleanup only releases resources acquired by the current run
+- [ ] Destructive tests use a disposable loop device or VM
 
 ## Documentation
 - [ ] README.md updated (if applicable)

@@ -29,14 +29,16 @@ security, or install reliability.
 - Never remove broad paths or use broad destructive commands without explicit
   target validation.
 - Wait for partition nodes after changing partition tables.
-- Keep cleanup idempotent: unmount `/mnt`, swapoff the installer swap LV,
-  deactivate `volgroup0`, and close `cryptlvm` when present.
+- Keep cleanup idempotent and ownership-aware: unmount `/mnt`, swapoff the
+  installer swap LV, deactivate `volgroup0`, and close `cryptlvm` only when the
+  current run successfully acquired each resource.
 
 ## Storage, encryption, and boot
 
 - Use LUKS2 for encrypted root: `cryptsetup luksFormat --type luks2`.
-- Do not log passwords. Prefer stdin/key-file patterns and unset password
-  variables after use.
+- Do not log passwords or pass plaintext passwords as command arguments. Hash
+  user passwords through stdin, validate the hash, and unset plaintext
+  variables immediately.
 - Preserve device suffix handling for NVMe, eMMC, and loop devices.
 - Preserve GRUB encrypted-root configuration through `/etc/default/grub` using
   the LUKS partition UUID so both `linux` and `linux-lts` entries are covered.

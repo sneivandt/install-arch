@@ -7,6 +7,10 @@ set -o pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=test/test_helpers.sh
 source "$SCRIPT_DIR/test_helpers.sh"
+# shellcheck source=install-arch.sh
+source "$SCRIPT_DIR/../install-arch.sh"
+# Assertions accumulate failures for the final summary instead of exiting early.
+set +o errexit
 
 echo "========================================"
 echo "Running install-arch.sh Unit Tests"
@@ -170,53 +174,41 @@ test_script_executable() {
   fi
 }
 
-# Test 12: Validate all packages in base package list
-# NOTE: This package list is duplicated from install-arch.sh for validation.
-# If packages are added/removed in the main script, update this list accordingly.
-# Future enhancement: Extract package list dynamically from install-arch.sh
+# Test 12: Validate all packages in the installer's base package list
 test_base_packages() {
-  local base_packages=(
-    "base" "base-devel" "bat" "btop" "ctags" "curl" "dash"
-    "docker" "duf" "efibootmgr" "eza" "fail2ban" "fd" "fzf" "git" "git-delta"
-    "grub" "jq" "lazygit" "linux" "linux-firmware" "linux-headers"
-    "linux-lts" "linux-lts-headers" "lvm2" "man-db" "man-pages"
-    "networkmanager" "neovim" "openssh" "pacman-contrib" "reflector"
-    "ripgrep" "sed" "shellcheck" "rustup" "sudo" "tmux" "ufw"
-    "util-linux" "vim" "wget" "xdg-user-dirs" "zip" "zoxide" "zsh" "zsh-autosuggestions"
-    "zsh-completions" "zsh-syntax-highlighting"
-  )
-
   local passed=0
-  for pkg in "${base_packages[@]}"; do
+  for pkg in "${BASE_PACKAGES[@]}"; do
     if validate_package_name "$pkg"; then
       ((passed++))
     fi
   done
 
-  assert_equals "${#base_packages[@]}" "$passed" "All base packages have valid names"
+  assert_equals "${#BASE_PACKAGES[@]}" "$passed" "All base packages have valid names"
 }
 
-# Test 13: Validate GUI packages
-# NOTE: This package list is duplicated from install-arch.sh for validation.
-# If packages are added/removed in the main script, update this list accordingly.
-# Future enhancement: Extract package list dynamically from install-arch.sh
+# Test 13: Validate the installer's GUI packages
 test_gui_packages() {
-  local gui_packages=(
-    "alacritty" "alsa-utils" "chromium" "gammastep" "grim"
-    "hyprland" "hypridle" "hyprlock" "hyprpaper" "mako"
-    "otf-font-awesome" "papirus-icon-theme" "playerctl"
-    "qt5-wayland" "qt6-wayland" "slurp" "uwsm" "waybar"
-    "wl-clipboard" "fuzzel" "xorg-xwayland"
-  )
-
   local passed=0
-  for pkg in "${gui_packages[@]}"; do
+  for pkg in "${GUI_PACKAGES[@]}"; do
     if validate_package_name "$pkg"; then
       ((passed++))
     fi
   done
 
-  assert_equals "${#gui_packages[@]}" "$passed" "All GUI packages have valid names"
+  assert_equals "${#GUI_PACKAGES[@]}" "$passed" "All GUI packages have valid names"
+}
+
+test_vbox_packages() {
+  local passed=0
+  local pkg
+
+  for pkg in "${VBOX_PACKAGES[@]}"; do
+    if validate_package_name "$pkg"; then
+      ((passed++))
+    fi
+  done
+
+  assert_equals "${#VBOX_PACKAGES[@]}" "$passed" "All VirtualBox packages have valid names"
 }
 
 # Test 14: Test mode environment variables
@@ -251,6 +243,42 @@ test_shebang() {
   else
     test_fail "Shebang check" "Script file not found"
   fi
+}
+
+test_password_hashing_treats_options_as_data() {
+  local result
+
+  result=$(hash_password "-stdin")
+  assert_contains "$result" "\$6\$" "Option-like passwords are hashed as password data"
+}
+
+test_video_driver_validation() {
+  assert_command_success "nvidia-open is an allowed video driver" validate_video_driver "nvidia-open"
+  assert_command_success "nvidia is an allowed video driver" validate_video_driver "nvidia"
+  assert_command_success "Empty video driver is allowed" validate_video_driver ""
+  assert_command_fails "Pacstrap options are rejected as video drivers" validate_video_driver "--overwrite"
+}
+
+test_destructive_test_mode_requires_opt_in() {
+  local script_path="$SCRIPT_DIR/../install-arch.sh"
+
+  assert_command_fails "Test mode is non-destructive by default" "$script_path" --test-mode
+}
+
+test_stdin_execution() {
+  local output
+  local script_path="$SCRIPT_DIR/../install-arch.sh"
+
+  output=$(
+    TEST_MODE_MODE="1" \
+    TEST_MODE_HOSTNAME="testhost" \
+    TEST_MODE_USER="testuser" \
+    TEST_MODE_PASSWORD="testpass" \
+    TEST_MODE_DEVICE="/dev/loop0" \
+    TEST_MODE_LUKS_PASSWORD="lukspass" \
+      bash -s -- --test-mode --dry-run < "$script_path" 2>&1
+  )
+  assert_contains "$output" "[DRY-RUN]" "Installer supports execution from standard input"
 }
 
 run_script_dry_run() {
@@ -326,8 +354,13 @@ test_script_syntax
 test_script_executable
 test_base_packages
 test_gui_packages
+test_vbox_packages
 test_test_mode_vars
 test_shebang
+test_password_hashing_treats_options_as_data
+test_video_driver_validation
+test_destructive_test_mode_requires_opt_in
+test_stdin_execution
 test_dotfiles_bootstrap_minimal
 test_dotfiles_bootstrap_desktop
 

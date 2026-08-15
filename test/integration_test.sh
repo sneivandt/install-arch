@@ -5,7 +5,7 @@
 # - Script syntax and executability
 # - Command-line flag acceptance (--dry-run, --test-mode)
 # - Environment variable handling (TEST_MODE_*)
-# - Loop device creation and cleanup
+# - Isolated loop device creation and cleanup
 # - Dry-run mode operation without destructive actions
 #
 # NOTE: This test does not perform actual disk operations. Full installation
@@ -24,7 +24,7 @@ trap 'echo "Error on line $LINENO"' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEST_DISK_SIZE="12G"
-TEST_DISK_IMAGE="/tmp/test-disk.img"
+TEST_DISK_IMAGE=""
 TEST_LOOP_DEVICE=""
 
 # Color codes
@@ -52,42 +52,17 @@ log_warning() {
 
 cleanup() {
   log_info "Cleaning up..."
-  
-  # Unmount if mounted
-  if mountpoint -q /mnt 2>/dev/null; then
-    log_info "Unmounting /mnt"
-    umount -R /mnt 2>/dev/null || true
-  fi
-  
-  # Deactivate swap
-  swapoff -a 2>/dev/null || true
-  
-  # Deactivate LVM volumes
-  if [ -e /dev/mapper/volgroup0-root ]; then
-    log_info "Deactivating LVM volumes"
-    lvchange -an /dev/volgroup0/root 2>/dev/null || true
-    lvchange -an /dev/volgroup0/swap 2>/dev/null || true
-    vgchange -an volgroup0 2>/dev/null || true
-  fi
-  
-  # Close LUKS device
-  if [ -e /dev/mapper/cryptlvm ]; then
-    log_info "Closing LUKS device"
-    cryptsetup close cryptlvm 2>/dev/null || true
-  fi
-  
-  # Detach loop device
-  if [ -n "$TEST_LOOP_DEVICE" ] && [ -e "$TEST_LOOP_DEVICE" ]; then
+
+  if [ -n "$TEST_LOOP_DEVICE" ] && [ -b "$TEST_LOOP_DEVICE" ]; then
     log_info "Detaching loop device $TEST_LOOP_DEVICE"
     losetup -d "$TEST_LOOP_DEVICE" 2>/dev/null || true
   fi
-  
-  # Remove test disk image
-  if [ -f "$TEST_DISK_IMAGE" ]; then
+
+  if [ -n "$TEST_DISK_IMAGE" ] && [ -f "$TEST_DISK_IMAGE" ]; then
     log_info "Removing test disk image"
-    rm -f "$TEST_DISK_IMAGE"
+    rm -f -- "$TEST_DISK_IMAGE"
   fi
-  
+
   log_info "Cleanup complete"
 }
 
@@ -108,7 +83,7 @@ run_integration_test() {
   
   # Step 2: Check for required commands
   log_info "Checking for required commands..."
-  local required_cmds=("losetup" "sfdisk" "wipefs" "partx" "udevadm" "cryptsetup" "lvm" "mkfs.ext4" "mkfs.vfat")
+  local required_cmds=("fallocate" "losetup" "mktemp")
   for cmd in "${required_cmds[@]}"; do
     if ! command -v "$cmd" > /dev/null; then
       log_error "Required command not found: $cmd"
@@ -119,6 +94,7 @@ run_integration_test() {
   
   # Step 3: Create disk image
   log_info "Creating test disk image ($TEST_DISK_SIZE)..."
+  TEST_DISK_IMAGE="$(mktemp /tmp/install-arch-test-disk.XXXXXX.img)"
   if ! fallocate -l "$TEST_DISK_SIZE" "$TEST_DISK_IMAGE"; then
     log_error "Failed to create disk image"
     exit 1
@@ -146,9 +122,7 @@ run_integration_test() {
   
   # Step 6: Run the installer in test mode
   log_info "Running install-arch.sh in test mode..."
-  log_warning "This will partition and format $TEST_LOOP_DEVICE"
-  
-  # For now, just test that the script accepts the flags
+  # For now, test that the script accepts the flags without mutating the loop device.
   if ! bash -n "$SCRIPT_DIR/../install-arch.sh"; then
     log_error "Script has syntax errors"
     exit 1
@@ -157,11 +131,18 @@ run_integration_test() {
   
   # Test dry-run mode
   log_info "Testing dry-run mode..."
-  if "$SCRIPT_DIR/../install-arch.sh" --dry-run --test-mode 2>&1 | head -20; then
-    log_success "Dry-run mode test completed"
-  else
-    log_warning "Dry-run mode encountered issues (this may be expected)"
+  local installer_output
+  if ! installer_output="$("$SCRIPT_DIR/../install-arch.sh" --dry-run --test-mode 2>&1)"; then
+    log_error "Dry-run mode failed"
+    printf '%s\n' "$installer_output"
+    return 1
   fi
+  printf '%s\n' "$installer_output" | sed -n '1,20p'
+  if [[ "$installer_output" != *"[DRY-RUN]"* ]]; then
+    log_error "Dry-run output did not contain any dry-run actions"
+    return 1
+  fi
+  log_success "Dry-run mode test completed"
   
   log_info "=========================================="
   log_info "Integration Test Complete"

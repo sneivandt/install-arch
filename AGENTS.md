@@ -11,11 +11,17 @@ leave a machine unbootable.
 
 - Prefer small, behavior-preserving changes unless the user explicitly asks for
   a behavior change.
-- Preserve `--dry-run` and `--test-mode` behavior for every installer change.
+- Preserve `--dry-run` behavior and keep `--test-mode` non-destructive by
+  default.
 - Keep shell code ShellCheck-clean, quote variables, avoid `eval`, and fail
   loudly instead of silently continuing after invalid input.
 - Never test destructive operations on a real disk. Use dry-run, containers,
-  VMs, or loop devices.
+  VMs, or disposable loop devices. Destructive test mode requires its explicit
+  opt-in flag and complete `TEST_MODE_*` input.
+- Cleanup may release only resources acquired by the current installer or test
+  run; track ownership instead of acting on names merely because they exist.
+- Unit tests must source production helpers and package arrays rather than
+  maintaining test-only copies.
 - Update `README.md`, tests, and CI expectations when user-visible behavior,
   paths, package lists, or validation commands change.
 - Do not commit secrets, passwords, machine-specific credentials, or private

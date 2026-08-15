@@ -36,15 +36,21 @@ available.
 ## Test-mode expectations
 
 - `--dry-run` must not mutate the host system.
-- `--test-mode` should avoid interactive `dialog` prompts and expose enough
-  output for assertions.
+- `--test-mode` should avoid interactive `dialog` prompts, expose enough output
+  for assertions, and require `--dry-run` by default.
+- Destructive test mode requires `--allow-destructive-test-mode`, every required
+  `TEST_MODE_*` variable, and a disposable loop device. Never use the opt-in
+  with a physical disk.
 - Keep dry-run output stable when tests assert on command structure.
-- Update `test/unit_tests.sh` when package arrays, device naming, or dotfiles
-  command flow changes.
+- Source production helpers and package arrays from `install-arch.sh`; do not
+  copy their implementations into test helpers.
 
 ## Safety boundaries
 
 - Never validate destructive paths on a real disk.
-- Use VMs, containers, loop devices, or dry-run/test-mode for install flows.
+- Test cleanup may release only resources created by that test run. Never use
+  broad operations such as `swapoff -a` or unmount a shared `/mnt`.
+- Use VMs, containers, disposable loop devices, or dry-run/test-mode for install
+  flows.
 - If a command requires root and the current session is not root, state that it
   was not run rather than faking coverage.

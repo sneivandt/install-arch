@@ -19,11 +19,11 @@ primarily disk/encryption/boot safety logic.
 
 ## Package and mode changes
 
-- Keep base packages in `packages`, desktop packages in `packages_gui`, and VM
-  additions in `packages_vbox`.
+- Keep source package definitions in `BASE_PACKAGES`, `GUI_PACKAGES`, and
+  `VBOX_PACKAGES`; runtime arrays may extend copies of those definitions.
 - Consider dotfiles-owned packages before adding installer-owned packages; avoid
   duplicating dotfiles AUR/package responsibilities.
-- Verify Arch package names and keep tests in sync with package arrays.
+- Verify Arch package names; unit tests validate the production arrays directly.
 - Minimal mode uses the `base` dotfiles profile. Workstation and VirtualBox use
   the `desktop` profile.
 
