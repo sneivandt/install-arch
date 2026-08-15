@@ -259,6 +259,39 @@ test_video_driver_validation() {
   assert_command_fails "Pacstrap options are rejected as video drivers" validate_video_driver "--overwrite"
 }
 
+test_swap_size_low_memory() {
+  local result
+
+  result=$(calculate_swap_size_gib "$((1 * 1024 * 1024))" "$((32 * 1024 * 1024 * 1024))")
+  assert_equals "2" "$result" "Swap is twice RAM on low-memory systems"
+}
+
+test_swap_size_matches_midrange_memory() {
+  local result
+
+  result=$(calculate_swap_size_gib "$((6 * 1024 * 1024))" "$((32 * 1024 * 1024 * 1024))")
+  assert_equals "6" "$result" "Swap matches RAM on midrange systems"
+}
+
+test_swap_size_caps_high_memory() {
+  local result
+
+  result=$(calculate_swap_size_gib "$((32 * 1024 * 1024))" "$((64 * 1024 * 1024 * 1024))")
+  assert_equals "8" "$result" "Swap is capped on high-memory systems"
+}
+
+test_swap_size_preserves_root_space() {
+  local result
+
+  result=$(calculate_swap_size_gib "$((16 * 1024 * 1024))" "$((12 * 1024 * 1024 * 1024))")
+  assert_equals "3" "$result" "Swap shrinks on small disks to preserve root space"
+}
+
+test_swap_size_rejects_invalid_inputs() {
+  assert_command_fails "Swap sizing rejects zero memory" calculate_swap_size_gib "0" "$((32 * 1024 * 1024 * 1024))"
+  assert_command_fails "Swap sizing rejects undersized disks" calculate_swap_size_gib "$((8 * 1024 * 1024))" "$((9 * 1024 * 1024 * 1024))"
+}
+
 test_destructive_test_mode_requires_opt_in() {
   local script_path="$SCRIPT_DIR/../install-arch.sh"
 
@@ -291,7 +324,17 @@ run_script_dry_run() {
   TEST_MODE_PASSWORD="testpass" \
   TEST_MODE_DEVICE="/dev/loop0" \
   TEST_MODE_LUKS_PASSWORD="lukspass" \
+  TEST_MODE_MEMORY_KIB="$((6 * 1024 * 1024))" \
+  TEST_MODE_DEVICE_SIZE_BYTES="$((32 * 1024 * 1024 * 1024))" \
     "$script_path" --test-mode --dry-run 2>&1
+}
+
+test_dry_run_uses_calculated_swap_size() {
+  local output
+
+  output=$(run_script_dry_run "1")
+  assert_contains "$output" "lvcreate -L 6G volgroup0 -n swap" \
+    "Dry run creates swap using the calculated size"
 }
 
 # Test 16: Dotfiles bootstrap uses current base profile flow
@@ -359,8 +402,14 @@ test_test_mode_vars
 test_shebang
 test_password_hashing_treats_options_as_data
 test_video_driver_validation
+test_swap_size_low_memory
+test_swap_size_matches_midrange_memory
+test_swap_size_caps_high_memory
+test_swap_size_preserves_root_space
+test_swap_size_rejects_invalid_inputs
 test_destructive_test_mode_requires_opt_in
 test_stdin_execution
+test_dry_run_uses_calculated_swap_size
 test_dotfiles_bootstrap_minimal
 test_dotfiles_bootstrap_desktop
 

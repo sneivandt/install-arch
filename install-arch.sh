@@ -186,6 +186,90 @@ get_partition_name() {
   printf '%s%s%s\n' "$target_device" "$device_prefix" "$partition_number"
 }
 
+get_total_memory_kib() {
+  local memory_kib=""
+
+  if [ "$TEST_MODE" = "true" ] && [ -n "${TEST_MODE_MEMORY_KIB:-}" ]; then
+    memory_kib="$TEST_MODE_MEMORY_KIB"
+  elif ! memory_kib="$(awk '/^MemTotal:/ { print $2; found=1; exit } END { if (!found) exit 1 }' /proc/meminfo)"; then
+    echo "Error: Unable to determine total system memory." >&2
+    return 1
+  fi
+
+  if ! [[ "$memory_kib" =~ ^[0-9]+$ ]] || [ "$memory_kib" -eq 0 ]; then
+    echo "Error: Total system memory must be a positive integer in KiB." >&2
+    return 1
+  fi
+
+  printf '%s\n' "$memory_kib"
+}
+
+get_target_size_bytes() {
+  local target_device="$1"
+  local size_bytes=""
+
+  if [ "$TEST_MODE" = "true" ] && [ "$DRY_RUN" = "true" ] &&
+    [ -n "${TEST_MODE_DEVICE_SIZE_BYTES:-}" ]; then
+    size_bytes="$TEST_MODE_DEVICE_SIZE_BYTES"
+  elif [ -b "$target_device" ]; then
+    if ! size_bytes="$(blockdev --getsize64 "$target_device")"; then
+      echo "Error: Unable to determine the size of target device '$target_device'." >&2
+      return 1
+    fi
+  elif [ "$TEST_MODE" = "true" ] && [ "$DRY_RUN" = "true" ]; then
+    size_bytes=$((20 * 1024 * 1024 * 1024))
+  else
+    echo "Error: Unable to determine the size of target device '$target_device'." >&2
+    return 1
+  fi
+
+  if ! [[ "$size_bytes" =~ ^[0-9]+$ ]] || [ "$size_bytes" -eq 0 ]; then
+    echo "Error: Target device size must be a positive integer in bytes." >&2
+    return 1
+  fi
+
+  printf '%s\n' "$size_bytes"
+}
+
+calculate_swap_size_gib() {
+  local memory_kib="$1"
+  local disk_bytes="$2"
+  local gib_kib=$((1024 * 1024))
+  local gib_bytes=$((1024 * 1024 * 1024))
+  local desired_swap_gib
+  local disk_gib
+  local max_swap_gib
+
+  if ! [[ "$memory_kib" =~ ^[0-9]+$ ]] || [ "$memory_kib" -eq 0 ]; then
+    echo "Error: Memory size must be a positive integer in KiB." >&2
+    return 1
+  fi
+  if ! [[ "$disk_bytes" =~ ^[0-9]+$ ]] || [ "$disk_bytes" -eq 0 ]; then
+    echo "Error: Disk size must be a positive integer in bytes." >&2
+    return 1
+  fi
+
+  if [ "$memory_kib" -le $((2 * gib_kib)) ]; then
+    desired_swap_gib=$(((2 * memory_kib + gib_kib - 1) / gib_kib))
+  elif [ "$memory_kib" -le $((8 * gib_kib)) ]; then
+    desired_swap_gib=$(((memory_kib + gib_kib - 1) / gib_kib))
+  else
+    desired_swap_gib=8
+  fi
+
+  disk_gib=$((disk_bytes / gib_bytes))
+  max_swap_gib=$((disk_gib - 9))
+  if [ "$max_swap_gib" -lt 1 ]; then
+    echo "Error: Target device is too small to allocate swap and preserve at least 8 GiB for root." >&2
+    return 1
+  fi
+  if [ "$desired_swap_gib" -gt "$max_swap_gib" ]; then
+    desired_swap_gib="$max_swap_gib"
+  fi
+
+  printf '%s\n' "$desired_swap_gib"
+}
+
 hash_password() {
   local plaintext_password="$1"
   local password_hash
@@ -581,6 +665,9 @@ ensure_install_names_available
 
 part_efi="$(get_partition_name "$device" 1)"
 part_luks="$(get_partition_name "$device" 2)"
+total_memory_kib="$(get_total_memory_kib)"
+target_size_bytes="$(get_target_size_bytes "$device")"
+swap_size_gib="$(calculate_swap_size_gib "$total_memory_kib" "$target_size_bytes")"
 
 if [ "$TEST_MODE" = "true" ]; then
   password_luks1="${TEST_MODE_LUKS_PASSWORD:-lukspass123}"
@@ -657,7 +744,7 @@ if [ "$DRY_RUN" = "false" ]; then
   INSTALL_CREATED_VG=true
 fi
 
-run_cmd lvcreate -L 1G volgroup0 -n swap
+run_cmd lvcreate -L "${swap_size_gib}G" volgroup0 -n swap
 run_cmd lvcreate -l 100%FREE volgroup0 -n root
 
 run_cmd mkswap -f /dev/mapper/volgroup0-swap

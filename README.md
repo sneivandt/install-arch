@@ -76,10 +76,15 @@ For a disk such as `/dev/sda`, the installer creates:
 | --- | --- |
 | `/dev/sda1` | 512 MiB FAT32 EFI system partition mounted at `/boot` |
 | `/dev/sda2` | LUKS2 encrypted partition opened as `cryptlvm` |
-| `volgroup0/swap` | 1 GiB swap logical volume |
+| `volgroup0/swap` | Dynamically sized swap logical volume |
 | `volgroup0/root` | Ext4 root logical volume using the remaining space |
 
 NVMe, MMC, and loop devices use partition names such as `/dev/nvme0n1p1`.
+
+Swap is sized from physical memory: twice RAM for systems with up to 2 GiB,
+equal to RAM from 2-8 GiB, and capped at 8 GiB above that. On small disks it is
+reduced to preserve at least approximately 8 GiB for the root filesystem. This
+policy is intended for normal memory pressure, not hibernation.
 
 GRUB is installed for UEFI and configured to unlock the encrypted LVM root
 volume during boot.
@@ -111,7 +116,7 @@ change any of these defaults:
 | --- | --- |
 | Timezone | `US/Pacific` |
 | Mirror country | `US` |
-| Swap size | `1G` |
+| Swap size | RAM-based, 1-8 GiB depending on memory and disk capacity |
 | Bootloader | GRUB |
 | Encryption | LUKS2 with LVM |
 | DNS | Google DNS with Cloudflare fallback |
