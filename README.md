@@ -140,6 +140,8 @@ The installer configures:
 - Weekly reflector and filesystem trim timers
 - Pacman package-cache cleanup
 - Baseline kernel and network hardening
+- Arch-managed AUR build prerequisites (`base-devel`, `git`, `rust`, and
+  `sudo`), with Cargo and rustc verified inside the target
 - A primary user in the `wheel` and `docker` groups
 - zsh as the user's login shell
 - A locked root account
@@ -154,7 +156,10 @@ being recreated. The installer restores the expected home path, primary group,
 `wheel`/`docker` memberships, zsh login shell, password, and top-level home
 ownership without moving or overwriting existing home contents. A matching
 dotfiles checkout is reused; an unrelated directory or checkout is left intact
-and reported as an error.
+and reported as an error. Bootstrap prerequisites are also converged again in
+the target, so a partial install made by an older installer replaces an
+unconfigured `rustup` proxy with Arch's complete `rust` toolchain before
+dotfiles runs.
 
 ## Opinionated defaults
 

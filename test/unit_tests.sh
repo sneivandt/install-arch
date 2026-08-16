@@ -186,6 +186,44 @@ test_base_packages() {
   assert_equals "${#BASE_PACKAGES[@]}" "$passed" "All base packages have valid names"
 }
 
+test_dotfiles_build_prerequisites() {
+  local base_devel_count=0
+  local git_count=0
+  local rust_count=0
+  local rustup_count=0
+  local sudo_count=0
+  local output
+  local package
+
+  for package in "${BASE_PACKAGES[@]}"; do
+    case "$package" in
+      base-devel) ((base_devel_count++)) ;;
+      git) ((git_count++)) ;;
+      rust) ((rust_count++)) ;;
+      rustup) ((rustup_count++)) ;;
+      sudo) ((sudo_count++)) ;;
+    esac
+  done
+
+  assert_equals "1" "$base_devel_count" "Base packages include base-devel for AUR builds"
+  assert_equals "1" "$git_count" "Base packages include git for AUR sources"
+  assert_equals "1" "$rust_count" "Base packages include the Arch Rust toolchain"
+  assert_equals "0" "$rustup_count" "Base packages exclude an unconfigured rustup proxy"
+  assert_equals "1" "$sudo_count" "Base packages include sudo for makepkg installation"
+
+  output=$(run_script_dry_run "1")
+  assert_contains "$output" \
+    "arch-chroot /mnt pacman -Syu --needed --noconfirm base-devel git rust sudo" \
+    "Installer converges AUR build prerequisites inside the target"
+  assert_contains "$output" "arch-chroot /mnt cargo --version" \
+    "Installer validates Cargo inside the target"
+  assert_contains "$output" "arch-chroot /mnt rustc --version" \
+    "Installer validates rustc inside the target"
+  assert_occurs_before "$output" "arch-chroot /mnt cargo --version" \
+    "/home/testuser/src/dotfiles/dotfiles.sh test -p base" \
+    "Target Cargo validation precedes the dotfiles bootstrap"
+}
+
 # Test 13: Validate the installer's GUI packages
 test_gui_packages() {
   local passed=0
@@ -1045,7 +1083,7 @@ test_missing_alsa_control_is_nonfatal() {
   rm -f -- "$debug_log_path"
 }
 
-test_resume_skips_destructive_and_package_stages() {
+test_resume_skips_destructive_and_pacstrap_stages() {
   local output
   local script_path="$SCRIPT_DIR/../install-arch.sh"
 
@@ -1066,7 +1104,10 @@ test_resume_skips_destructive_and_package_stages() {
   assert_contains "$output" "vgchange -ay volgroup0" \
     "Resume activates the existing volume group"
   assert_not_contains "$output" "pacstrap -K" \
-    "Resume skips package installation"
+    "Resume skips the original pacstrap package installation"
+  assert_contains "$output" \
+    "arch-chroot /mnt pacman -Syu --needed --noconfirm base-devel git rust sudo" \
+    "Resume reconverges target bootstrap prerequisites"
   assert_not_contains "$output" "sfdisk --wipe" \
     "Resume skips partitioning"
   assert_not_contains "$output" "cryptsetup luksFormat" \
@@ -1132,6 +1173,7 @@ test_package_validation
 test_script_syntax
 test_script_executable
 test_base_packages
+test_dotfiles_build_prerequisites
 test_gui_packages
 test_kernel_and_audio_packages
 test_vbox_packages
@@ -1165,7 +1207,7 @@ test_existing_user_is_reconciled
 test_existing_dotfiles_checkout_is_reused
 test_target_failure_reports_operation_and_output
 test_missing_alsa_control_is_nonfatal
-test_resume_skips_destructive_and_package_stages
+test_resume_skips_destructive_and_pacstrap_stages
 test_target_resolv_conf_is_idempotent
 
 # Print summary and exit with appropriate code

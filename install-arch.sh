@@ -549,7 +549,7 @@ BASE_PACKAGES=(
   ripgrep
   sed
   shellcheck
-  rustup
+  rust
   sudo
   tmux
   ufw
@@ -1703,6 +1703,18 @@ run_required_step "write /mnt/etc/xdg/reflector/reflector.conf" \
 --latest 20
 --sort rate
 EOF
+
+# Dotfiles bootstrap prerequisites
+# Converge and validate AUR build tools inside the target on both fresh and
+# resumed installs. Requesting rust explicitly also replaces the conflicting
+# rustup proxy package left by older failed installer runs.
+
+debug_checkpoint "dotfiles_bootstrap_prerequisites"
+run_required_step \
+  "arch-chroot /mnt pacman -Syu --needed --noconfirm base-devel git rust sudo" \
+  in_target pacman -Syu --needed --noconfirm base-devel git rust sudo
+run_required_step "arch-chroot /mnt cargo --version" in_target cargo --version
+run_required_step "arch-chroot /mnt rustc --version" in_target rustc --version
 
 # User and dotfiles
 # Create the primary user, temporarily allow sudo for dotfiles, then require sudo passwords.
