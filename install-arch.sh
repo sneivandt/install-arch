@@ -11,7 +11,9 @@
 #   1 Minimal (CLI only)
 #   2 Workstation (Wayland + Hyprland + optional NVIDIA)
 #   3 VirtualBox Workstation (adds guest utils)
-# Logging starts only after password collection.
+# Installer stdout/stderr logging starts only after password collection. A
+# separate diagnostic trace is available from startup at
+# /tmp/install-arch-debug.log.
 set -o errexit
 set -o nounset
 set -o pipefail
@@ -27,6 +29,11 @@ INSTALL_ENABLED_SWAP=false
 INSTALL_MOUNTED_ROOT=false
 TEMP_SUDOERS_CREATED=false
 DIALOG_TTY_FD=""
+DEBUG_LOG_PATH="/tmp/install-arch-debug.log"
+CURRENT_STAGE="runtime_setup"
+DIALOG_ACTIVE=false
+CURRENT_DIALOG_NAME="none"
+CURRENT_DIALOG_WIDGET="none"
 
 # Explicit dimensions avoid broken dialog autosizing on the Arch live ISO.
 DIALOG_MENU_HEIGHT=15
@@ -61,8 +68,45 @@ parse_args() {
   done
 }
 
+debug_log() {
+  local timestamp
+
+  printf -v timestamp '%(%Y-%m-%dT%H:%M:%S%z)T' -1
+  printf '[%s] %s\n' "$timestamp" "$*" >> "$DEBUG_LOG_PATH" 2>/dev/null || true
+}
+
+debug_tty() {
+  if [ "$TEST_MODE" = "false" ]; then
+    { printf '[install-arch] %s\n' "$*" > /dev/tty; } 2>/dev/null || true
+  fi
+}
+
+debug_checkpoint() {
+  CURRENT_STAGE="$1"
+  debug_log "checkpoint stage=$CURRENT_STAGE"
+  debug_tty "Stage: $CURRENT_STAGE"
+}
+
+initialize_debug_log() {
+  if ! (umask 077 && : > "$DEBUG_LOG_PATH"); then
+    echo "Warning: Unable to initialize installer debug log at $DEBUG_LOG_PATH." >&2
+    return
+  fi
+  debug_checkpoint "starting_installer"
+}
+
+handle_signal() {
+  local signal_name="$1"
+  local exit_code="$2"
+
+  debug_log "signal event=received signal=$signal_name stage=$CURRENT_STAGE dialog_active=$DIALOG_ACTIVE dialog_name=$CURRENT_DIALOG_NAME widget=$CURRENT_DIALOG_WIDGET"
+  debug_tty "Received $signal_name during stage '$CURRENT_STAGE'; preserving $DEBUG_LOG_PATH"
+  exit "$exit_code"
+}
+
 error_handler() {
   local exit_code=$?
+  debug_log "error event=command_failed exit_status=$exit_code stage=$CURRENT_STAGE line=${BASH_LINENO[0]}"
   echo "$0: Error on line ${BASH_LINENO[0]}: ${BASH_COMMAND}" >&2
   exit "$exit_code"
 }
@@ -110,35 +154,95 @@ initialize_dialog_tty() {
 
 dialog_capture() {
   local destination_variable="$1"
+  local logical_name="$2"
+  local widget_type="$3"
+  local dialog_height="$4"
+  local dialog_width="$5"
+  local menu_rows="$6"
+  local option_count="$7"
   local dialog_output
-  shift
+  local dialog_status
+  local output_state
+  shift 7
 
   if [ -z "$DIALOG_TTY_FD" ]; then
     echo "Error: The installer terminal is not initialized." >&2
     return 1
   fi
 
-  if ! dialog_output="$(
+  CURRENT_STAGE="dialog:$logical_name"
+  DIALOG_ACTIVE=true
+  CURRENT_DIALOG_NAME="$logical_name"
+  CURRENT_DIALOG_WIDGET="$widget_type"
+  debug_log "dialog event=enter name=$logical_name widget=$widget_type height=$dialog_height width=$dialog_width menu_rows=$menu_rows options=$option_count exit_status=not_applicable output=not_applicable"
+  debug_tty "Entering $logical_name dialog ($widget_type)"
+
+  if dialog_output="$(
     dialog --input-fd "$DIALOG_TTY_FD" --output-fd 3 "$@" \
       3>&1 \
       1>&"$DIALOG_TTY_FD" \
       2>&"$DIALOG_TTY_FD"
   )"; then
-    return 1
+    dialog_status=0
+  else
+    dialog_status=$?
   fi
 
+  if [ -n "$dialog_output" ]; then
+    output_state="non-empty"
+  else
+    output_state="empty"
+  fi
+  debug_log "dialog event=exit name=$logical_name widget=$widget_type height=$dialog_height width=$dialog_width menu_rows=$menu_rows options=$option_count exit_status=$dialog_status output=$output_state"
+  debug_tty "Exited $logical_name dialog ($widget_type), status $dialog_status, output $output_state"
+  DIALOG_ACTIVE=false
+  CURRENT_DIALOG_NAME="none"
+  CURRENT_DIALOG_WIDGET="none"
+
+  if [ "$dialog_status" -ne 0 ]; then
+    # Preserve the wrapper's existing failure contract while retaining the
+    # actual dialog status in the diagnostic log.
+    return 1
+  fi
   printf -v "$destination_variable" '%s' "$dialog_output"
 }
 
 dialog_display() {
+  local logical_name="$1"
+  local widget_type="$2"
+  local dialog_height="$3"
+  local dialog_width="$4"
+  local menu_rows="$5"
+  local option_count="$6"
+  local dialog_status
+  shift 6
+
   if [ -z "$DIALOG_TTY_FD" ]; then
     echo "Error: The installer terminal is not initialized." >&2
     return 1
   fi
 
-  dialog --input-fd "$DIALOG_TTY_FD" "$@" \
+  CURRENT_STAGE="dialog:$logical_name"
+  DIALOG_ACTIVE=true
+  CURRENT_DIALOG_NAME="$logical_name"
+  CURRENT_DIALOG_WIDGET="$widget_type"
+  debug_log "dialog event=enter name=$logical_name widget=$widget_type height=$dialog_height width=$dialog_width menu_rows=$menu_rows options=$option_count exit_status=not_applicable output=not_applicable"
+  debug_tty "Entering $logical_name dialog ($widget_type)"
+
+  if dialog --input-fd "$DIALOG_TTY_FD" "$@" \
     1>&"$DIALOG_TTY_FD" \
-    2>&"$DIALOG_TTY_FD"
+    2>&"$DIALOG_TTY_FD"; then
+    dialog_status=0
+  else
+    dialog_status=$?
+  fi
+
+  debug_log "dialog event=exit name=$logical_name widget=$widget_type height=$dialog_height width=$dialog_width menu_rows=$menu_rows options=$option_count exit_status=$dialog_status output=not_applicable"
+  debug_tty "Exited $logical_name dialog ($widget_type), status $dialog_status"
+  DIALOG_ACTIVE=false
+  CURRENT_DIALOG_NAME="none"
+  CURRENT_DIALOG_WIDGET="none"
+  return "$dialog_status"
 }
 
 require_destructive_test_variables() {
@@ -190,8 +294,9 @@ initialize_runtime() {
   # Report the failing command and release resources acquired by this run.
   trap error_handler ERR
   trap cleanup EXIT
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
+  trap 'handle_signal INT 130' INT
+  trap 'handle_signal TERM 143' TERM
+  initialize_debug_log
 
   if [ "$ALLOW_DESTRUCTIVE_TEST_MODE" = "true" ] &&
     { [ "$TEST_MODE" != "true" ] || [ "$DRY_RUN" = "true" ]; }; then
@@ -217,16 +322,20 @@ initialize_runtime() {
       echo "Error: UEFI boot mode is required. Reboot the installer media in UEFI mode."
       exit 1
     fi
+    debug_checkpoint "keyring_preparation"
     if ! prepare_pacman_keyring; then
       echo "Error: Pacman keyring preparation failed. Cannot install installer dependencies." >&2
       exit 1
     fi
+    debug_checkpoint "dependency_installation"
     if ! pacman -Sy --needed --noconfirm dialog; then
       echo "Error: Failed to install dialog. Cannot proceed with interactive installation."
       echo "Check your internet connection and try again."
       exit 1
     fi
+    debug_checkpoint "initializing_dialog_terminal"
     initialize_dialog_tty
+    debug_checkpoint "runtime_initialized"
   fi
 }
 
@@ -626,7 +735,9 @@ confirm_destructive_action() {
   fi
 
   device_summary="$(lsblk -dno NAME,SIZE,MODEL "$target_device" | sed 's/[[:space:]]\+/ /g')"
-  dialog_display --clear --defaultno --yesno \
+  dialog_display "destructive_confirmation" "yesno" \
+    "$DIALOG_CONFIRM_HEIGHT" "$DIALOG_CONFIRM_WIDTH" "not_applicable" "not_applicable" \
+    --clear --defaultno --yesno \
     "This will permanently erase all data on:\n\n$device_summary\n\nContinue?" \
     "$DIALOG_CONFIRM_HEIGHT" "$DIALOG_CONFIRM_WIDTH" || exit 1
 }
@@ -667,7 +778,9 @@ if [ -n "${BASH_SOURCE[0]:-}" ] && [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
 fi
 
 initialize_runtime "$@"
+debug_checkpoint "preflight_checks"
 run_preflight_checks
+debug_checkpoint "preflight_checks_complete"
 
 # Input and validation
 # Collect required interactive parameters before mutating system state.
@@ -675,7 +788,10 @@ run_preflight_checks
 if [ "$TEST_MODE" = "true" ]; then
   mode="${TEST_MODE_MODE:-1}"
 else
-  dialog_capture mode --clear --menu "Select install mode" \
+  debug_checkpoint "collecting_install_mode"
+  dialog_capture mode "install_mode" "menu" \
+    "$DIALOG_MENU_HEIGHT" "$DIALOG_MENU_WIDTH" "$DIALOG_MENU_ROWS" "3" \
+    --clear --menu "Select install mode" \
     "$DIALOG_MENU_HEIGHT" "$DIALOG_MENU_WIDTH" "$DIALOG_MENU_ROWS" \
     "1" "Minimal" "2" "Workstation" "3" "VirtualBox" || exit 1
 fi
@@ -687,7 +803,10 @@ fi
 if [ "$TEST_MODE" = "true" ]; then
   hostname="${TEST_MODE_HOSTNAME:-testhost}"
 else
-  dialog_capture hostname --clear --inputbox "Enter hostname" \
+  debug_checkpoint "collecting_hostname"
+  dialog_capture hostname "hostname" "inputbox" \
+    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH" "not_applicable" "not_applicable" \
+    --clear --inputbox "Enter hostname" \
     "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH" || exit 1
 fi
 [ -z "$hostname" ] && echo "hostname cannot be empty" && exit 1
@@ -700,7 +819,10 @@ fi
 if [ "$TEST_MODE" = "true" ]; then
   user="${TEST_MODE_USER:-testuser}"
 else
-  dialog_capture user --clear --inputbox "Enter username" \
+  debug_checkpoint "collecting_username"
+  dialog_capture user "username" "inputbox" \
+    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH" "not_applicable" "not_applicable" \
+    --clear --inputbox "Enter username" \
     "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH" || exit 1
 fi
 [ -z "$user" ] && echo "username cannot be empty" && exit 1
@@ -713,9 +835,14 @@ if [ "$TEST_MODE" = "true" ]; then
   password1="${TEST_MODE_PASSWORD:-testpass123}"
   password2="$password1"
 else
-  dialog_capture password1 --clear --insecure --passwordbox "Enter password" \
+  debug_checkpoint "collecting_user_password"
+  dialog_capture password1 "user_password" "passwordbox" \
+    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH" "not_applicable" "not_applicable" \
+    --clear --insecure --passwordbox "Enter password" \
     "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH" || exit 1
-  dialog_capture password2 --clear --insecure --passwordbox "Enter password again" \
+  dialog_capture password2 "user_password_confirmation" "passwordbox" \
+    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH" "not_applicable" "not_applicable" \
+    --clear --insecure --passwordbox "Enter password again" \
     "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH" || exit 1
 fi
 [ -z "$password1" ] && echo "password cannot be empty" && exit 1
@@ -735,6 +862,7 @@ if [ "$TEST_MODE" = "true" ]; then
     exit 1
   fi
 else
+  debug_checkpoint "building_disk_list"
   device_options=()
   while read -r disk_name disk_size; do
     device_options+=( "$disk_name" "$disk_size" )
@@ -745,9 +873,23 @@ else
     exit 1
   fi
 
-  dialog_capture device --clear --menu "Select installation disk" \
+  debug_log "disk_options count=$((${#device_options[@]} / 2))"
+  for ((option_index = 0; option_index < ${#device_options[@]}; option_index += 2)); do
+    printf -v safe_disk_name '%q' "${device_options[option_index]}"
+    printf -v safe_disk_size '%q' "${device_options[option_index + 1]}"
+    debug_log "disk_option index=$((option_index / 2 + 1)) device=$safe_disk_name size=$safe_disk_size"
+  done
+
+  debug_checkpoint "opening_disk_selection_dialog"
+  dialog_capture device "disk_selection" "menu" \
+    "$DIALOG_MENU_HEIGHT" "$DIALOG_MENU_WIDTH" "$DIALOG_MENU_ROWS" \
+    "$((${#device_options[@]} / 2))" \
+    --clear --menu "Select installation disk" \
     "$DIALOG_MENU_HEIGHT" "$DIALOG_MENU_WIDTH" "$DIALOG_MENU_ROWS" \
     "${device_options[@]}" || exit 1
+  printf -v safe_selected_device '%q' "$device"
+  debug_checkpoint "disk_selected"
+  debug_log "disk_selection result=$safe_selected_device"
 fi
 validate_target_device "$device"
 if [ "$TEST_MODE" = "true" ] && [ "$DRY_RUN" = "false" ]; then
@@ -756,9 +898,12 @@ if [ "$TEST_MODE" = "true" ] && [ "$DRY_RUN" = "false" ]; then
     exit 1
   fi
 fi
+debug_checkpoint "destructive_confirmation"
 confirm_destructive_action "$device"
+debug_checkpoint "destructive_confirmation_complete"
 ensure_install_names_available
 
+debug_checkpoint "calculating_storage_layout"
 part_efi="$(get_partition_name "$device" 1)"
 part_luks="$(get_partition_name "$device" 2)"
 total_memory_kib="$(get_total_memory_kib)"
@@ -769,9 +914,14 @@ if [ "$TEST_MODE" = "true" ]; then
   password_luks1="${TEST_MODE_LUKS_PASSWORD:-lukspass123}"
   password_luks2="$password_luks1"
 else
-  dialog_capture password_luks1 --clear --insecure --passwordbox "Enter disk encryption password" \
+  debug_checkpoint "collecting_luks_password"
+  dialog_capture password_luks1 "luks_password" "passwordbox" \
+    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH" "not_applicable" "not_applicable" \
+    --clear --insecure --passwordbox "Enter disk encryption password" \
     "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH" || exit 1
-  dialog_capture password_luks2 --clear --insecure --passwordbox "Enter disk encryption password again" \
+  dialog_capture password_luks2 "luks_password_confirmation" "passwordbox" \
+    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH" "not_applicable" "not_applicable" \
+    --clear --insecure --passwordbox "Enter disk encryption password again" \
     "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH" || exit 1
 fi
 [ -z "$password_luks1" ] && echo "disk encryption password cannot be empty" && exit 1
@@ -780,10 +930,13 @@ if [ "$password_luks1" != "$password_luks2" ]; then echo "Passwords did not matc
 # Only prompt for NVIDIA drivers when hardware is detected in desktop modes.
 video_driver=""
 if [ "$mode" -eq 2 ] || [ "$mode" -eq 3 ]; then
+  debug_checkpoint "detecting_video_driver"
   if [ "$TEST_MODE" = "true" ]; then
     video_driver="${TEST_MODE_VIDEO_DRIVER:-}"
   elif command -v lspci >/dev/null 2>&1 && lspci | grep -e VGA -e 3D | grep -q NVIDIA; then
-    dialog_capture video_driver --clear --menu "NVIDIA GPU detected. Select driver" \
+    dialog_capture video_driver "nvidia_driver" "menu" \
+      "$DIALOG_MENU_HEIGHT" "$DIALOG_MENU_WIDTH" "$DIALOG_MENU_ROWS" "3" \
+      --clear --menu "NVIDIA GPU detected. Select driver" \
       "$DIALOG_MENU_HEIGHT" "$DIALOG_MENU_WIDTH" "$DIALOG_MENU_ROWS" \
       "nvidia-open" "Open kernel modules (Turing+, recommended)" \
       "nvidia" "Proprietary (pre-Turing GPUs)" \
@@ -799,6 +952,7 @@ if [ "$mode" -eq 2 ] || [ "$mode" -eq 3 ]; then
 fi
 
 # Prompts are complete; close the dedicated terminal before logging begins.
+debug_checkpoint "interactive_prompts_complete"
 close_dialog_tty
 
 # Avoid writing logs during tests so assertions can inspect stdout/stderr directly.
@@ -810,6 +964,7 @@ fi
 # Disk provisioning
 # Create ESP + LUKS2-on-LVM layout and mount it at /mnt.
 
+debug_checkpoint "partitioning"
 if [ "$DRY_RUN" = "true" ]; then
   dry_run_msg "Would wipe signatures and create GPT partitions on $device"
 else
@@ -826,12 +981,14 @@ EOF
   wait_for_block_device "$part_luks"
 fi
 
+debug_checkpoint "formatting_luks"
 if [ "$DRY_RUN" = "true" ]; then
   dry_run_msg "Would encrypt $part_luks with LUKS2"
 else
   printf '%s' "$password_luks1" | cryptsetup luksFormat --type luks2 --batch-mode --key-file - "$part_luks"
 fi
 
+debug_checkpoint "opening_luks"
 if [ "$DRY_RUN" = "true" ]; then
   dry_run_msg "Would open LUKS device $part_luks as cryptlvm"
 else
@@ -841,6 +998,7 @@ else
   unset password_luks1 password_luks2
 fi
 
+debug_checkpoint "configuring_lvm"
 run_cmd pvcreate --yes --force /dev/mapper/cryptlvm
 if [ "$DRY_RUN" = "false" ]; then
   # ensure_install_names_available established that this name was unused.
@@ -851,10 +1009,12 @@ run_cmd vgcreate volgroup0 /dev/mapper/cryptlvm
 run_cmd lvcreate -L "${swap_size_gib}G" volgroup0 -n swap
 run_cmd lvcreate -l 100%FREE volgroup0 -n root
 
+debug_checkpoint "formatting_filesystems"
 run_cmd mkswap -f /dev/mapper/volgroup0-swap
 run_cmd mkfs.ext4 -F /dev/mapper/volgroup0-root
 run_cmd mkfs.vfat -F32 -n EFI "$part_efi"
 
+debug_checkpoint "mounting_filesystems"
 if [ "$DRY_RUN" = "false" ]; then
   INSTALL_MOUNTED_ROOT=true
 fi
@@ -869,6 +1029,7 @@ run_cmd mount "$part_efi" /mnt/boot
 # Package installation
 # Refresh package metadata/keyring, select packages for the chosen mode, then pacstrap.
 
+debug_checkpoint "preparing_package_mirrors"
 if [ "$DRY_RUN" = "true" ]; then
   dry_run_msg "Would update mirrorlist"
 else
@@ -920,11 +1081,13 @@ case "$mode" in
     ;;
 esac
 
+debug_checkpoint "package_installation"
 run_cmd pacstrap -K /mnt "${packages[@]}"
 
 # Target system configuration
 # Write base OS configuration and enable services before user bootstrap.
 
+debug_checkpoint "target_system_configuration"
 if [ "$DRY_RUN" = "true" ]; then
   dry_run_msg "Would generate fstab"
 else
@@ -1116,6 +1279,7 @@ EOF
 # User and dotfiles
 # Create the primary user, temporarily allow sudo for dotfiles, then require sudo passwords.
 
+debug_checkpoint "user_and_dotfiles_configuration"
 if [ "$DRY_RUN" = "true" ]; then
   dry_run_msg "Would create user $user with a SHA-512 password hash"
 else
@@ -1174,6 +1338,7 @@ fi
 # Boot configuration
 # Build initramfs images with encryption/LVM hooks and install GRUB for UEFI boot.
 
+debug_checkpoint "boot_configuration"
 if [ "$DRY_RUN" = "true" ]; then
   dry_run_msg "Would configure mkinitcpio hooks"
 else
@@ -1208,6 +1373,7 @@ in_target grub-mkconfig -o /boot/grub/grub.cfg
 
 # Cleanup
 # Release resources explicitly; the EXIT trap handles failures before this point.
+debug_checkpoint "final_cleanup"
 run_cmd swapoff /dev/mapper/volgroup0-swap
 INSTALL_ENABLED_SWAP=false
 run_cmd umount -R /mnt
@@ -1216,3 +1382,4 @@ run_cmd vgchange -an volgroup0
 INSTALL_CREATED_VG=false
 run_cmd cryptsetup close cryptlvm
 INSTALL_OPENED_LUKS=false
+debug_checkpoint "installer_complete"

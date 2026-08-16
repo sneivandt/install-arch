@@ -326,6 +326,8 @@ test_dialog_dimensions_are_explicit() {
 }
 
 test_dialog_uses_explicit_tty_streams() {
+  local DEBUG_LOG_PATH
+  local TEST_MODE=true
   local input_target
   local output
   local probe_file
@@ -374,11 +376,13 @@ test_dialog_uses_explicit_tty_streams() {
     printf '/dev/testdisk' >&"$output_fd"
   }
 
-  if ! dialog_capture selected_device --clear --menu disk 15 76 6 \
+  DEBUG_LOG_PATH="$(mktemp)"
+  if ! dialog_capture selected_device "test_disk_selection" "menu" 15 76 6 1 \
+    --clear --menu disk 15 76 6 \
     /dev/testdisk 100G </dev/null; then
     unset -f dialog
     close_dialog_tty
-    rm -f -- "$terminal_file" "$probe_file"
+    rm -f -- "$terminal_file" "$probe_file" "$DEBUG_LOG_PATH"
     test_start "Dialog capture succeeds with redirected standard input"
     test_fail "Dialog capture succeeds with redirected standard input"
     return
@@ -407,7 +411,103 @@ test_dialog_uses_explicit_tty_streams() {
     test_pass "Dialog invocations avoid non-portable --stdout"
   fi
 
-  rm -f -- "$terminal_file" "$probe_file"
+  rm -f -- "$terminal_file" "$probe_file" "$DEBUG_LOG_PATH"
+}
+
+test_dialog_debug_logging_hides_passwords() {
+  local DEBUG_LOG_PATH
+  local TEST_MODE=true
+  local captured_password=""
+  local debug_output
+  local secret_value="do-not-log-this-password"
+  local terminal_file
+
+  terminal_file="$(mktemp)"
+  DEBUG_LOG_PATH="$(mktemp)"
+  exec {DIALOG_TTY_FD}<>"$terminal_file"
+
+  dialog() {
+    local output_fd=""
+
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --output-fd)
+          output_fd="$2"
+          shift 2
+          ;;
+        *)
+          shift
+          ;;
+      esac
+    done
+    printf '%s' "$secret_value" >&"$output_fd"
+  }
+
+  dialog_capture captured_password "test_password" "passwordbox" 8 50 \
+    "not_applicable" "not_applicable" --passwordbox password 8 50
+  unset -f dialog
+  close_dialog_tty
+  debug_output="$(<"$DEBUG_LOG_PATH")"
+
+  assert_not_empty "$captured_password" "Password dialog still captures its output"
+  assert_contains "$debug_output" \
+    "dialog event=enter name=test_password widget=passwordbox height=8 width=50" \
+    "Password dialog entry metadata is logged"
+  assert_contains "$debug_output" \
+    "dialog event=exit name=test_password widget=passwordbox height=8 width=50" \
+    "Password dialog exit metadata is logged"
+  assert_contains "$debug_output" "exit_status=0 output=non-empty" \
+    "Password dialog logs status and non-empty output state"
+
+  test_start "Password contents are excluded from debug logging"
+  if [[ "$debug_output" == *"$secret_value"* ]]; then
+    test_fail "Password contents are excluded from debug logging"
+  else
+    test_pass "Password contents are excluded from debug logging"
+  fi
+
+  rm -f -- "$terminal_file" "$DEBUG_LOG_PATH"
+}
+
+test_signal_logging_records_active_dialog() {
+  local CURRENT_DIALOG_NAME="disk_selection"
+  local CURRENT_DIALOG_WIDGET="menu"
+  local CURRENT_STAGE="dialog:disk_selection"
+  local DEBUG_LOG_PATH
+  local DIALOG_ACTIVE=true
+  local TEST_MODE=true
+  local debug_output
+  local signal_status
+
+  DEBUG_LOG_PATH="$(mktemp)"
+
+  (handle_signal INT 130)
+  signal_status=$?
+  debug_output="$(<"$DEBUG_LOG_PATH")"
+
+  assert_equals "130" "$signal_status" "Signal handler preserves the interrupt exit status"
+  assert_contains "$debug_output" "signal event=received signal=INT" \
+    "Signal handler records the received signal"
+  assert_contains "$debug_output" \
+    "stage=dialog:disk_selection dialog_active=true dialog_name=disk_selection widget=menu" \
+    "Signal handler records the active dialog and stage"
+
+  rm -f -- "$DEBUG_LOG_PATH"
+}
+
+test_cleanup_preserves_debug_log() {
+  local DEBUG_LOG_PATH
+  local DRY_RUN=true
+  local debug_output
+
+  DEBUG_LOG_PATH="$(mktemp)"
+  printf 'preserve this diagnostic trace\n' > "$DEBUG_LOG_PATH"
+  cleanup
+  debug_output="$(<"$DEBUG_LOG_PATH")"
+
+  assert_equals "preserve this diagnostic trace" "$debug_output" \
+    "Cleanup preserves the installer debug log"
+  rm -f -- "$DEBUG_LOG_PATH"
 }
 
 test_pacman_keyring_preparation_sequence() {
@@ -683,6 +783,9 @@ test_password_hashing_treats_options_as_data
 test_video_driver_validation
 test_dialog_dimensions_are_explicit
 test_dialog_uses_explicit_tty_streams
+test_dialog_debug_logging_hides_passwords
+test_signal_logging_records_active_dialog
+test_cleanup_preserves_debug_log
 test_pacman_keyring_preparation_sequence
 test_pacman_keyring_initialization_failure_is_clear
 test_destructive_confirmation_cancel_aborts

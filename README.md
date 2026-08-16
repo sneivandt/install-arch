@@ -61,6 +61,17 @@ they work whether the script is piped to Bash, run through process substitution,
 or executed from a file. After passwords have been collected, output is written
 to `stdout.log` and `stderr.log` in the current directory.
 
+The installer also writes a diagnostic trace from startup to
+`/tmp/install-arch-debug.log`. It records high-level installer checkpoints and,
+for every dialog, its logical name, widget type, dimensions, option count,
+entry/exit state, exit status, and whether captured output was empty. Password
+contents are never written to this trace. If an interactive run appears stuck,
+press `Ctrl+C` and inspect the preserved trace:
+
+```bash
+cat /tmp/install-arch-debug.log
+```
+
 ## Install modes
 
 | Mode | Description | Dotfiles profile |
