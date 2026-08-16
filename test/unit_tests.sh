@@ -902,6 +902,48 @@ test_resume_skips_destructive_and_package_stages() {
     "Resume skips filesystem formatting"
 }
 
+test_target_resolv_conf_is_idempotent() {
+  local test_root
+  local desired_target="/run/systemd/resolve/stub-resolv.conf"
+  local link_path
+  local original_inode
+
+  test_root="$(mktemp -d)"
+  link_path="$test_root/etc/resolv.conf"
+  mkdir -p -- "$test_root/etc" "$test_root/run/systemd/resolve"
+  touch "$test_root$desired_target"
+
+  configure_target_resolv_conf "$test_root"
+  assert_equals "$desired_target" "$(readlink -- "$link_path")" \
+    "Missing target resolv.conf is linked to the systemd-resolved stub"
+
+  original_inode="$(stat -c '%i' -- "$link_path")"
+  configure_target_resolv_conf "$test_root"
+  assert_equals "$original_inode" "$(stat -c '%i' -- "$link_path")" \
+    "Correct target resolv.conf link is left unchanged"
+
+  rm -f -- "$link_path"
+  ln -s ../run/systemd/resolve/stub-resolv.conf "$link_path"
+  original_inode="$(stat -c '%i' -- "$link_path")"
+  configure_target_resolv_conf "$test_root"
+  assert_equals "$original_inode" "$(stat -c '%i' -- "$link_path")" \
+    "Target resolv.conf link resolving to the stub is left unchanged"
+
+  rm -f -- "$link_path"
+  ln -s /run/systemd/resolve/resolv.conf "$link_path"
+  configure_target_resolv_conf "$test_root"
+  assert_equals "$desired_target" "$(readlink -- "$link_path")" \
+    "Wrong target resolv.conf link is replaced"
+
+  rm -f -- "$link_path"
+  printf 'nameserver 192.0.2.1\n' > "$link_path"
+  configure_target_resolv_conf "$test_root"
+  assert_equals "$desired_target" "$(readlink -- "$link_path")" \
+    "Regular target resolv.conf file is replaced with the desired link"
+
+  rm -r -- "$test_root"
+}
+
 # Run all tests
 test_device_prefix_nvme
 test_device_prefix_sata
@@ -948,6 +990,7 @@ test_dotfiles_bootstrap_desktop
 test_target_failure_reports_operation_and_output
 test_missing_alsa_control_is_nonfatal
 test_resume_skips_destructive_and_package_stages
+test_target_resolv_conf_is_idempotent
 
 # Print summary and exit with appropriate code
 echo ""

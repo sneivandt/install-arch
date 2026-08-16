@@ -671,6 +671,54 @@ append_file() {
   fi
 }
 
+target_symlink_is_correct() {
+  local target_root="$1"
+  local desired_target="$2"
+  local link_path="$3"
+  local current_target
+  local current_path
+  local desired_path
+
+  if [ ! -L "$target_root$link_path" ]; then
+    return 1
+  fi
+
+  current_target="$(readlink -- "$target_root$link_path")"
+  case "$current_target" in
+    /*)
+      current_path="$target_root$current_target"
+      ;;
+    *)
+      current_path="$target_root${link_path%/*}/$current_target"
+      ;;
+  esac
+  desired_path="$target_root$desired_target"
+
+  [ "$(realpath -ms -- "$current_path")" = "$(realpath -ms -- "$desired_path")" ]
+}
+
+ensure_target_symlink() {
+  local target_root="$1"
+  local desired_target="$2"
+  local link_path="$3"
+
+  if [ "$DRY_RUN" = "false" ] &&
+    target_symlink_is_correct "$target_root" "$desired_target" "$link_path"; then
+    return
+  fi
+
+  run_cmd ln -sfnT -- "$desired_target" "$target_root$link_path"
+}
+
+configure_target_resolv_conf() {
+  local target_root="${1:-/mnt}"
+
+  ensure_target_symlink \
+    "$target_root" \
+    /run/systemd/resolve/stub-resolv.conf \
+    /etc/resolv.conf
+}
+
 generate_target_fstab() {
   local fstab_tmp
 
@@ -736,6 +784,7 @@ run_preflight_checks() {
     findmnt
     genfstab
     install
+    ln
     lsblk
     lvcreate
     mkfs.ext4
@@ -748,6 +797,8 @@ run_preflight_checks() {
     pacstrap
     partx
     pvcreate
+    readlink
+    realpath
     sfdisk
     swapon
     udevadm
@@ -1306,8 +1357,8 @@ case "$mode" in
 esac
 
 # The installer is opinionated; adjust this before running for other regions.
-run_required_step "arch-chroot /mnt set US/Pacific timezone" \
-  in_target ln -sf /usr/share/zoneinfo/US/Pacific /etc/localtime
+run_required_step "link /mnt/etc/localtime to US/Pacific timezone" \
+  ensure_target_symlink /mnt /usr/share/zoneinfo/US/Pacific /etc/localtime
 
 enable_services \
   NetworkManager.service \
@@ -1320,8 +1371,8 @@ enable_services \
   fstrim.timer \
   reflector.timer
 
-run_required_step "arch-chroot /mnt link systemd-resolved resolv.conf" \
-  in_target ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+run_required_step "link /mnt/etc/resolv.conf to systemd-resolved stub" \
+  configure_target_resolv_conf
 
 run_required_step "arch-chroot /mnt ufw default deny incoming" \
   in_target ufw default deny incoming
