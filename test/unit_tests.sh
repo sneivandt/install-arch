@@ -510,6 +510,47 @@ test_cleanup_preserves_debug_log() {
   rm -f -- "$DEBUG_LOG_PATH"
 }
 
+test_stage_logging_preserves_console_output() {
+  local DEBUG_LOG_PATH
+  local TEST_MODE=true
+  local output
+
+  DEBUG_LOG_PATH="$(mktemp)"
+  output="$({
+    debug_checkpoint "package_installation"
+    printf 'package download progress\n'
+    printf 'package warning on stderr\n' >&2
+    debug_checkpoint "target_system_configuration"
+  } 2>&1)"
+
+  assert_contains "$output" "==> Stage: package_installation" \
+    "Stage transitions are visible on the console"
+  assert_contains "$output" "package download progress" \
+    "Stage logging preserves command stdout"
+  assert_contains "$output" "package warning on stderr" \
+    "Stage logging preserves command stderr"
+  assert_occurs_before "$output" "==> Stage: package_installation" \
+    "package download progress" \
+    "Stage marker precedes command output"
+  assert_occurs_before "$output" "package warning on stderr" \
+    "==> Stage: target_system_configuration" \
+    "Command output precedes the next stage marker"
+
+  rm -f -- "$DEBUG_LOG_PATH"
+}
+
+test_installer_does_not_globally_redirect_console_streams() {
+  local script_path="$SCRIPT_DIR/../install-arch.sh"
+
+  test_start "Installer keeps normal console streams attached"
+  if grep -Eq '^[[:space:]]*exec[[:space:]]+[12]?>' "$script_path"; then
+    test_fail "Installer keeps normal console streams attached" \
+      "Found a process-wide stdout/stderr file redirection"
+  else
+    test_pass "Installer keeps normal console streams attached"
+  fi
+}
+
 test_pacman_keyring_preparation_sequence() {
   local output
 
@@ -786,6 +827,8 @@ test_dialog_uses_explicit_tty_streams
 test_dialog_debug_logging_hides_passwords
 test_signal_logging_records_active_dialog
 test_cleanup_preserves_debug_log
+test_stage_logging_preserves_console_output
+test_installer_does_not_globally_redirect_console_streams
 test_pacman_keyring_preparation_sequence
 test_pacman_keyring_initialization_failure_is_clear
 test_destructive_confirmation_cancel_aborts

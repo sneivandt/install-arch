@@ -58,10 +58,11 @@ The installer asks for:
 Before changing the disk, it shows the selected device and requires
 confirmation. Interactive prompts use the controlling terminal directly, so
 they work whether the script is piped to Bash, run through process substitution,
-or executed from a file. After passwords have been collected, output is written
-to `stdout.log` and `stderr.log` in the current directory.
+or executed from a file. During installation, clear `==> Stage: ...` markers
+separate major operations while commands such as `pacstrap`, filesystem tools,
+`mkinitcpio`, and GRUB keep their normal stdout/stderr attached to the terminal.
 
-The installer also writes a diagnostic trace from startup to
+Separately, the installer writes a diagnostic trace from startup to
 `/tmp/install-arch-debug.log`. It records high-level installer checkpoints and,
 for every dialog, its logical name, widget type, dimensions, option count,
 entry/exit state, exit status, and whether captured output was empty. Password

@@ -11,9 +11,8 @@
 #   1 Minimal (CLI only)
 #   2 Workstation (Wayland + Hyprland + optional NVIDIA)
 #   3 VirtualBox Workstation (adds guest utils)
-# Installer stdout/stderr logging starts only after password collection. A
-# separate diagnostic trace is available from startup at
-# /tmp/install-arch-debug.log.
+# Installer commands keep their normal terminal stdout/stderr. A separate
+# diagnostic trace is available from startup at /tmp/install-arch-debug.log.
 set -o errexit
 set -o nounset
 set -o pipefail
@@ -84,7 +83,7 @@ debug_tty() {
 debug_checkpoint() {
   CURRENT_STAGE="$1"
   debug_log "checkpoint stage=$CURRENT_STAGE"
-  debug_tty "Stage: $CURRENT_STAGE"
+  printf '\n==> Stage: %s\n' "$CURRENT_STAGE"
 }
 
 initialize_debug_log() {
@@ -126,6 +125,9 @@ cleanup() {
   fi
 
   set +o errexit
+  # Cleanup is best-effort after a failure. Suppress expected errors from
+  # resources that may already have been released, without hiding output from
+  # the normal installation commands above.
   if [ "$TEMP_SUDOERS_CREATED" = "true" ] &&
     [ "$INSTALL_MOUNTED_ROOT" = "true" ] &&
     mountpoint -q /mnt 2>/dev/null; then
@@ -951,15 +953,9 @@ if [ "$mode" -eq 2 ] || [ "$mode" -eq 3 ]; then
   fi
 fi
 
-# Prompts are complete; close the dedicated terminal before logging begins.
+# Prompts are complete; command output now returns to the normal console streams.
 debug_checkpoint "interactive_prompts_complete"
 close_dialog_tty
-
-# Avoid writing logs during tests so assertions can inspect stdout/stderr directly.
-if [ "$TEST_MODE" != "true" ]; then
-  exec 1>> "stdout.log"
-  exec 2>> "stderr.log"
-fi
 
 # Disk provisioning
 # Create ESP + LUKS2-on-LVM layout and mount it at /mnt.
@@ -1034,7 +1030,8 @@ if [ "$DRY_RUN" = "true" ]; then
   dry_run_msg "Would update mirrorlist"
 else
   mirrorlist_tmp="$(mktemp)"
-  curl -fsSL 'https://archlinux.org/mirrorlist/?country=US&protocol=https&ip_version=4' \
+  curl -fL --show-error --progress-bar \
+    'https://archlinux.org/mirrorlist/?country=US&protocol=https&ip_version=4' \
     | sed 's/^#Server/Server/' > "$mirrorlist_tmp"
   if ! grep -q '^Server = ' "$mirrorlist_tmp"; then
     echo "Error: Downloaded mirrorlist did not contain any enabled HTTPS mirrors."
@@ -1125,6 +1122,7 @@ dns=systemd-resolved
 EOF
 
 # Store an initial ALSA state so desktop sessions start with usable volume.
+# amixer's quiet flag intentionally avoids printing an unhelpful mixer dump.
 case "$mode" in
   2|3)
     in_target amixer -q sset Master 100%
