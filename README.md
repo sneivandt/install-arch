@@ -59,11 +59,13 @@ confirmation. After passwords have been collected, output is written to
 | Mode | Description | Dotfiles profile |
 | --- | --- | --- |
 | `1` Minimal | CLI system with development tools, Docker, zsh, and modern terminal utilities | `base` |
-| `2` Workstation | Minimal mode plus Hyprland, Wayland utilities, Chromium, audio tools, fonts, and optional NVIDIA drivers | `desktop` |
+| `2` Workstation | Minimal mode plus Hyprland, Wayland utilities, Chromium, PulseAudio, fonts, and optional NVIDIA drivers | `desktop` |
 | `3` VirtualBox | Workstation mode plus VirtualBox guest utilities and `vboxservice.service` | `desktop` |
 
-All modes install both the `linux` and `linux-lts` kernels. The installer also
-adds Intel or AMD microcode when it can identify the CPU vendor.
+All modes install Arch's current `linux` kernel and matching headers. This
+package tracks the latest stable kernel in the Arch repositories; no LTS kernel
+is installed. The installer also adds Intel or AMD microcode when it can
+identify the CPU vendor.
 
 Package definitions are maintained in the `BASE_PACKAGES`, `GUI_PACKAGES`, and
 `VBOX_PACKAGES` arrays in [`install-arch.sh`](install-arch.sh).

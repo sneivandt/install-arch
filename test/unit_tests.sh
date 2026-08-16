@@ -198,6 +198,39 @@ test_gui_packages() {
   assert_equals "${#GUI_PACKAGES[@]}" "$passed" "All GUI packages have valid names"
 }
 
+test_kernel_and_audio_packages() {
+  local linux_count=0
+  local linux_headers_count=0
+  local lts_count=0
+  local pulseaudio_count=0
+  local pkg
+
+  for pkg in "${BASE_PACKAGES[@]}"; do
+    case "$pkg" in
+      linux)
+        ((linux_count++))
+        ;;
+      linux-headers)
+        ((linux_headers_count++))
+        ;;
+      linux-lts|linux-lts-headers)
+        ((lts_count++))
+        ;;
+    esac
+  done
+
+  for pkg in "${GUI_PACKAGES[@]}"; do
+    if [ "$pkg" = "pulseaudio" ]; then
+      ((pulseaudio_count++))
+    fi
+  done
+
+  assert_equals "1" "$linux_count" "Base packages include the current Arch kernel"
+  assert_equals "1" "$linux_headers_count" "Base packages include matching kernel headers"
+  assert_equals "0" "$lts_count" "Base packages exclude LTS kernels"
+  assert_equals "1" "$pulseaudio_count" "GUI packages include PulseAudio"
+}
+
 test_vbox_packages() {
   local passed=0
   local pkg
@@ -397,6 +430,7 @@ test_script_syntax
 test_script_executable
 test_base_packages
 test_gui_packages
+test_kernel_and_audio_packages
 test_vbox_packages
 test_test_mode_vars
 test_shebang

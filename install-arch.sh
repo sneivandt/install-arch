@@ -311,8 +311,6 @@ BASE_PACKAGES=(
   linux
   linux-firmware
   linux-headers
-  linux-lts
-  linux-lts-headers
   lvm2
   man-db
   man-pages
@@ -354,6 +352,7 @@ GUI_PACKAGES=(
   otf-font-awesome
   papirus-icon-theme
   playerctl
+  pulseaudio
   qt5-wayland
   qt6-wayland
   slurp
@@ -1081,7 +1080,6 @@ else
   fi
 fi
 in_target mkinitcpio -p linux
-in_target mkinitcpio -p linux-lts
 
 if [ "$DRY_RUN" = "true" ]; then
   dry_run_msg "Would configure GRUB cryptdevice parameter from $part_luks UUID"
