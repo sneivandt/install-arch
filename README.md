@@ -149,6 +149,13 @@ It clones [sneivandt/dotfiles](https://github.com/sneivandt/dotfiles) to
 then applies it as the new user. Passwordless `wheel` sudo is enabled only
 during this bootstrap; normal password-required sudo is restored afterward.
 
+On `--resume`, an existing intended user is verified and reconciled instead of
+being recreated. The installer restores the expected home path, primary group,
+`wheel`/`docker` memberships, zsh login shell, password, and top-level home
+ownership without moving or overwriting existing home contents. A matching
+dotfiles checkout is reused; an unrelated directory or checkout is left intact
+and reported as an error.
+
 ## Opinionated defaults
 
 Review [`install-arch.sh`](install-arch.sh) before installing if you want to

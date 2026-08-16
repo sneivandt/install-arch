@@ -764,7 +764,7 @@ test_dotfiles_bootstrap_minimal() {
   local base_profile_fragment
 
   output=$(run_script_dry_run "1")
-  parent_dir_line="[DRY-RUN] Would execute: arch-chroot /mnt install -d -o testuser -g testuser /home/testuser/src"
+  parent_dir_line="[DRY-RUN] Would execute: arch-chroot /mnt mkdir -p /home/testuser/src"
   runuser_line_prefix="[DRY-RUN] Would execute: arch-chroot /mnt runuser -u testuser --"
   base_profile_fragment="/home/testuser/src/dotfiles/dotfiles.sh install -p base"
   test_profile_fragment="/home/testuser/src/dotfiles/dotfiles.sh test -p base"
@@ -798,6 +798,179 @@ test_dotfiles_bootstrap_desktop() {
 
   assert_contains "$output" "$desktop_profile_fragment" \
     "Desktop mode uses the desktop dotfiles profile"
+}
+
+run_user_account_scenario() (
+  local scenario="$1"
+  local command_log
+  local mock_user_exists=false
+  local mock_user_group_exists=false
+  local mock_user_uid="1000"
+  local mock_user_gid="100"
+  local mock_user_home="/srv/testuser"
+  local mock_user_shell="/bin/bash"
+  local mock_user_groups="users"
+  local mock_home_exists=true
+  local mock_home_owner="testuser:testuser"
+
+  command_log="$(mktemp)"
+  if [ "$scenario" = "fresh" ]; then
+    mock_home_exists=false
+    mock_home_owner="root:root"
+  else
+    mock_user_exists=true
+    mock_user_group_exists=true
+  fi
+
+  DRY_RUN=false
+  in_target() {
+    printf '%q ' "$@" >> "$command_log"
+    printf '\n' >> "$command_log"
+
+    case "$1" in
+      getent)
+        case "$2:$3" in
+          passwd:testuser)
+            if [ "$mock_user_exists" = "false" ]; then
+              return 2
+            fi
+            printf 'testuser:x:%s:%s::%s:%s\n' \
+              "$mock_user_uid" "$mock_user_gid" "$mock_user_home" "$mock_user_shell"
+            ;;
+          group:wheel)
+            printf 'wheel:x:998:\n'
+            ;;
+          group:docker)
+            printf 'docker:x:971:\n'
+            ;;
+          group:testuser)
+            if [ "$mock_user_group_exists" = "false" ]; then
+              return 2
+            fi
+            printf 'testuser:x:1000:\n'
+            ;;
+          *)
+            return 2
+            ;;
+        esac
+        ;;
+      groupadd)
+        mock_user_group_exists=true
+        ;;
+      useradd)
+        mock_user_exists=true
+        mock_user_group_exists=true
+        mock_user_gid="1000"
+        mock_user_home="/home/testuser"
+        mock_user_shell="/bin/zsh"
+        mock_user_groups="testuser docker wheel"
+        mock_home_exists=true
+        mock_home_owner="testuser:testuser"
+        ;;
+      usermod)
+        mock_user_gid="1000"
+        mock_user_home="/home/testuser"
+        mock_user_shell="/bin/zsh"
+        mock_user_groups="testuser users docker wheel"
+        ;;
+      test)
+        case "$2" in
+          -L)
+            return 1
+            ;;
+          -e|-d)
+            [ "$mock_home_exists" = "true" ]
+            ;;
+          *)
+            return 2
+            ;;
+        esac
+        ;;
+      mkdir)
+        mock_home_exists=true
+        ;;
+      chown)
+        if [ "${3:-}" = "/home/testuser" ]; then
+          mock_home_owner="testuser:testuser"
+        fi
+        ;;
+      id)
+        printf '%s\n' "$mock_user_groups"
+        ;;
+      stat)
+        printf '%s\n' "$mock_home_owner"
+        ;;
+      *)
+        return 2
+        ;;
+    esac
+  }
+
+  ensure_primary_user testuser 'test-password-hash'
+  cat "$command_log"
+  rm -f -- "$command_log"
+)
+
+test_fresh_user_creation() {
+  local output
+
+  output="$(run_user_account_scenario fresh)"
+  assert_contains "$output" \
+    "useradd -mU -G docker\\,wheel -s /bin/zsh -p test-password-hash testuser" \
+    "Fresh installation creates the requested user"
+  assert_not_contains "$output" "usermod " \
+    "Fresh installation does not take the existing-user reconciliation path"
+  assert_contains "$output" "stat -c %U:%G /home/testuser" \
+    "Fresh user state is verified after creation"
+}
+
+test_existing_user_is_reconciled() {
+  local output
+
+  output="$(run_user_account_scenario existing)"
+  assert_not_contains "$output" "useradd " \
+    "Resume does not recreate an existing user"
+  assert_contains "$output" \
+    "usermod -d /home/testuser -g testuser -aG docker\\,wheel -s /bin/zsh -p test-password-hash testuser" \
+    "Resume reconciles home, primary and supplementary groups, shell, and password"
+  assert_not_contains "$output" "usermod -m" \
+    "Resume does not move or merge existing home contents"
+  assert_contains "$output" "stat -c %U:%G /home/testuser" \
+    "Existing user state is verified after reconciliation"
+}
+
+test_existing_dotfiles_checkout_is_reused() {
+  local output
+
+  output="$({
+    DRY_RUN=false
+    user="testuser"
+    in_target() {
+      [ "$1" = "test" ] && [ "$2" = "-e" ]
+    }
+    as_user() {
+      case "$*" in
+        "git -C /home/testuser/src/dotfiles rev-parse --is-inside-work-tree")
+          printf 'true\n'
+          ;;
+        "git -C /home/testuser/src/dotfiles remote get-url origin")
+          printf 'https://github.com/sneivandt/dotfiles.git\n'
+          ;;
+        *)
+          printf 'unexpected as_user command: %s\n' "$*" >&2
+          return 2
+          ;;
+      esac
+    }
+    prepare_dotfiles_checkout \
+      "https://github.com/sneivandt/dotfiles.git" \
+      "/home/testuser/src/dotfiles"
+  } 2>&1)"
+
+  assert_contains "$output" "Reusing existing dotfiles checkout" \
+    "Resume reuses a matching existing dotfiles checkout"
+  assert_not_contains "$output" "unexpected as_user command" \
+    "Resume does not clone over an existing dotfiles checkout"
 }
 
 test_target_failure_reports_operation_and_output() {
@@ -987,6 +1160,9 @@ test_stdin_execution
 test_dry_run_uses_calculated_swap_size
 test_dotfiles_bootstrap_minimal
 test_dotfiles_bootstrap_desktop
+test_fresh_user_creation
+test_existing_user_is_reconciled
+test_existing_dotfiles_checkout_is_reused
 test_target_failure_reports_operation_and_output
 test_missing_alsa_control_is_nonfatal
 test_resume_skips_destructive_and_package_stages

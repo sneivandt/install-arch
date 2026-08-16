@@ -649,6 +649,204 @@ as_user() {
   in_target runuser -u "$user" -- env HOME="/home/$user" USER="$user" LOGNAME="$user" "$@"
 }
 
+target_group_record() {
+  local group_name="$1"
+
+  in_target getent group "$group_name"
+}
+
+ensure_target_group() {
+  local group_name="$1"
+  local group_type="$2"
+  local group_record
+
+  if group_record="$(target_group_record "$group_name")"; then
+    if [ "${group_record%%:*}" != "$group_name" ]; then
+      echo "Error: Target group lookup for '$group_name' returned an unexpected record." >&2
+      return 1
+    fi
+    return
+  fi
+
+  echo "Creating missing target group '$group_name'"
+  case "$group_type" in
+    system)
+      in_target groupadd --system "$group_name"
+      ;;
+    user)
+      in_target groupadd "$group_name"
+      ;;
+    *)
+      echo "Error: Unsupported target group type '$group_type'." >&2
+      return 1
+      ;;
+  esac
+}
+
+group_list_contains() {
+  local group_list="$1"
+  local expected_group="$2"
+
+  case " $group_list " in
+    *" $expected_group "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+verify_primary_user() {
+  local selected_user="$1"
+  local expected_home="/home/$selected_user"
+  local account_record
+  local account_name
+  local account_uid
+  local account_gid
+  local account_home
+  local account_shell
+  local primary_group_record
+  local primary_group_gid
+  local user_groups
+  local home_owner
+
+  if ! account_record="$(in_target getent passwd "$selected_user")"; then
+    echo "Error: Target user '$selected_user' is missing after account configuration." >&2
+    return 1
+  fi
+  IFS=: read -r account_name _ account_uid account_gid _ account_home account_shell <<< "$account_record"
+  if [ "$account_name" != "$selected_user" ] ||
+    ! [[ "$account_uid" =~ ^[0-9]+$ ]] || [ "$account_uid" -lt 1000 ]; then
+    echo "Error: Target account '$selected_user' is not a suitable regular user." >&2
+    return 1
+  fi
+  if [ "$account_home" != "$expected_home" ] || [ "$account_shell" != "/bin/zsh" ]; then
+    echo "Error: Target user '$selected_user' has unexpected home or shell after reconciliation." >&2
+    return 1
+  fi
+
+  if ! primary_group_record="$(target_group_record "$selected_user")"; then
+    echo "Error: Primary group '$selected_user' is missing after account configuration." >&2
+    return 1
+  fi
+  IFS=: read -r _ _ primary_group_gid _ <<< "$primary_group_record"
+  if [ "$account_gid" != "$primary_group_gid" ]; then
+    echo "Error: Target user '$selected_user' does not use its expected primary group." >&2
+    return 1
+  fi
+
+  user_groups="$(in_target id -nG "$selected_user")"
+  if ! group_list_contains "$user_groups" wheel ||
+    ! group_list_contains "$user_groups" docker; then
+    echo "Error: Target user '$selected_user' is missing an expected supplementary group." >&2
+    return 1
+  fi
+  if ! in_target test -d "$expected_home"; then
+    echo "Error: Expected home directory '$expected_home' is missing." >&2
+    return 1
+  fi
+  home_owner="$(in_target stat -c '%U:%G' "$expected_home")"
+  if [ "$home_owner" != "$selected_user:$selected_user" ]; then
+    echo "Error: Home directory '$expected_home' is owned by '$home_owner', not '$selected_user:$selected_user'." >&2
+    return 1
+  fi
+}
+
+ensure_primary_user() {
+  local selected_user="$1"
+  local selected_password_hash="$2"
+  local expected_home="/home/$selected_user"
+  local account_record
+
+  if [ "$DRY_RUN" = "true" ]; then
+    dry_run_msg "Would create target user $selected_user if missing, or reconcile the existing account without moving home contents"
+    in_target mkdir -p "$expected_home/src"
+    in_target chown "$selected_user:$selected_user" "$expected_home" "$expected_home/src"
+    return
+  fi
+
+  ensure_target_group wheel system
+  ensure_target_group docker system
+
+  if account_record="$(in_target getent passwd "$selected_user")"; then
+    local account_name
+    local account_uid
+
+    IFS=: read -r account_name _ account_uid _ <<< "$account_record"
+    if [ "$account_name" != "$selected_user" ] ||
+      ! [[ "$account_uid" =~ ^[0-9]+$ ]] || [ "$account_uid" -lt 1000 ]; then
+      echo "Error: Existing target account '$selected_user' is not a suitable regular user; refusing to modify it." >&2
+      return 1
+    fi
+
+    ensure_target_group "$selected_user" user
+    echo "Target user '$selected_user' already exists; reconciling account settings"
+    # Deliberately omit usermod -m: changing the passwd entry must never move,
+    # merge, or overwrite files from an earlier partial installation.
+    in_target usermod -d "$expected_home" -g "$selected_user" \
+      -aG docker,wheel -s /bin/zsh -p "$selected_password_hash" "$selected_user"
+  else
+    if target_group_record "$selected_user" >/dev/null 2>&1; then
+      in_target useradd -m -g "$selected_user" -G docker,wheel \
+        -s /bin/zsh -p "$selected_password_hash" "$selected_user"
+    else
+      in_target useradd -mU -G docker,wheel -s /bin/zsh \
+        -p "$selected_password_hash" "$selected_user"
+    fi
+  fi
+
+  if in_target test -L "$expected_home"; then
+    echo "Error: Expected home path '$expected_home' is a symbolic link; refusing to change its ownership." >&2
+    return 1
+  elif in_target test -e "$expected_home"; then
+    if ! in_target test -d "$expected_home"; then
+      echo "Error: Expected home path '$expected_home' exists but is not a directory." >&2
+      return 1
+    fi
+  else
+    in_target mkdir -p "$expected_home"
+  fi
+  in_target chown "$selected_user:$selected_user" "$expected_home"
+  in_target mkdir -p "$expected_home/src"
+  in_target chown "$selected_user:$selected_user" "$expected_home/src"
+
+  verify_primary_user "$selected_user"
+}
+
+prepare_dotfiles_checkout() {
+  local repository_url="$1"
+  local checkout_dir="$2"
+  local existing_remote
+
+  if [ "$DRY_RUN" = "true" ]; then
+    echo "Cloning dotfiles repository for $user if no checkout exists"
+    as_user git clone "$repository_url" "$checkout_dir"
+    return
+  fi
+
+  if in_target test -e "$checkout_dir/.git"; then
+    if ! as_user git -C "$checkout_dir" rev-parse --is-inside-work-tree >/dev/null; then
+      echo "Error: Existing dotfiles path '$checkout_dir' is not a usable Git checkout." >&2
+      return 1
+    fi
+    if ! existing_remote="$(as_user git -C "$checkout_dir" remote get-url origin)"; then
+      echo "Error: Existing dotfiles checkout '$checkout_dir' has no origin remote." >&2
+      return 1
+    fi
+    if [ "$existing_remote" != "$repository_url" ]; then
+      echo "Error: Existing dotfiles checkout '$checkout_dir' uses unexpected origin '$existing_remote'." >&2
+      return 1
+    fi
+    echo "Reusing existing dotfiles checkout at $checkout_dir"
+    return
+  fi
+
+  if in_target test -e "$checkout_dir"; then
+    echo "Error: Dotfiles path '$checkout_dir' already exists but is not a Git checkout; refusing to overwrite it." >&2
+    return 1
+  fi
+
+  echo "Cloning dotfiles repository for $user"
+  as_user git clone "$repository_url" "$checkout_dir"
+}
+
 write_file() {
   local path="$1"
 
@@ -1510,13 +1708,8 @@ EOF
 # Create the primary user, temporarily allow sudo for dotfiles, then require sudo passwords.
 
 debug_checkpoint "user_and_dotfiles_configuration"
-if [ "$DRY_RUN" = "true" ]; then
-  dry_run_msg "Would create user $user with a SHA-512 password hash"
-else
-  in_target useradd -mU -G docker,wheel -s /bin/zsh -p "$password_hash" "$user"
-  unset password_hash
-fi
-in_target chsh -s /bin/zsh "$user"
+ensure_primary_user "$user" "$password_hash"
+unset password_hash
 
 if [ "$DRY_RUN" = "false" ]; then
   TEMP_SUDOERS_CREATED=true
@@ -1543,9 +1736,7 @@ case "$mode" in
     ;;
 esac
 echo "Preparing dotfiles bootstrap directory for $user"
-in_target install -d -o "$user" -g "$user" "/home/$user/src"
-echo "Cloning dotfiles repository for $user"
-as_user git clone "$dotfiles_repo" "$dotfiles_dir"
+prepare_dotfiles_checkout "$dotfiles_repo" "$dotfiles_dir"
 echo "Validating dotfiles profile '$dotfiles_profile' for $user"
 as_user "$dotfiles_dir/dotfiles.sh" test -p "$dotfiles_profile"
 echo "Applying dotfiles profile '$dotfiles_profile' for $user"
