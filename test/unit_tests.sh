@@ -202,7 +202,9 @@ test_kernel_and_audio_packages() {
   local linux_count=0
   local linux_headers_count=0
   local lts_count=0
+  local pipewire_count=0
   local pulseaudio_count=0
+  local conflicting_audio_count=0
   local pkg
 
   for pkg in "${BASE_PACKAGES[@]}"; do
@@ -220,15 +222,25 @@ test_kernel_and_audio_packages() {
   done
 
   for pkg in "${GUI_PACKAGES[@]}"; do
-    if [ "$pkg" = "pulseaudio" ]; then
-      ((pulseaudio_count++))
-    fi
+    case "$pkg" in
+      pipewire)
+        ((pipewire_count++))
+        ;;
+      pulseaudio)
+        ((pulseaudio_count++))
+        ;;
+      pipewire-pulse|wireplumber)
+        ((conflicting_audio_count++))
+        ;;
+    esac
   done
 
   assert_equals "1" "$linux_count" "Base packages include the current Arch kernel"
   assert_equals "1" "$linux_headers_count" "Base packages include matching kernel headers"
   assert_equals "0" "$lts_count" "Base packages exclude LTS kernels"
+  assert_equals "1" "$pipewire_count" "GUI packages include PipeWire media support"
   assert_equals "1" "$pulseaudio_count" "GUI packages include PulseAudio"
+  assert_equals "0" "$conflicting_audio_count" "GUI packages exclude PulseAudio replacements"
 }
 
 test_vbox_packages() {

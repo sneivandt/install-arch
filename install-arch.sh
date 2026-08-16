@@ -352,6 +352,7 @@ GUI_PACKAGES=(
   otf-font-awesome
   papirus-icon-theme
   playerctl
+  pipewire
   pulseaudio
   qt5-wayland
   qt6-wayland
