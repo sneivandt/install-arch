@@ -26,6 +26,7 @@ INSTALL_CREATED_VG=false
 INSTALL_ENABLED_SWAP=false
 INSTALL_MOUNTED_ROOT=false
 TEMP_SUDOERS_CREATED=false
+DIALOG_TTY_FD=""
 
 # Explicit dimensions avoid broken dialog autosizing on the Arch live ISO.
 DIALOG_MENU_HEIGHT=15
@@ -66,7 +67,16 @@ error_handler() {
   exit "$exit_code"
 }
 
+close_dialog_tty() {
+  if [ -n "$DIALOG_TTY_FD" ]; then
+    exec {DIALOG_TTY_FD}>&-
+    DIALOG_TTY_FD=""
+  fi
+}
+
 cleanup() {
+  close_dialog_tty
+
   if [ "$DRY_RUN" = "true" ]; then
     return
   fi
@@ -89,6 +99,46 @@ cleanup() {
   if [ "$INSTALL_OPENED_LUKS" = "true" ]; then
     cryptsetup close cryptlvm 2>/dev/null || true
   fi
+}
+
+initialize_dialog_tty() {
+  if ! exec {DIALOG_TTY_FD}<>/dev/tty; then
+    echo "Error: An interactive terminal is required for installer prompts." >&2
+    return 1
+  fi
+}
+
+dialog_capture() {
+  local destination_variable="$1"
+  local dialog_output
+  shift
+
+  if [ -z "$DIALOG_TTY_FD" ]; then
+    echo "Error: The installer terminal is not initialized." >&2
+    return 1
+  fi
+
+  if ! dialog_output="$(
+    dialog --input-fd "$DIALOG_TTY_FD" --output-fd 3 "$@" \
+      3>&1 \
+      1>&"$DIALOG_TTY_FD" \
+      2>&"$DIALOG_TTY_FD"
+  )"; then
+    return 1
+  fi
+
+  printf -v "$destination_variable" '%s' "$dialog_output"
+}
+
+dialog_display() {
+  if [ -z "$DIALOG_TTY_FD" ]; then
+    echo "Error: The installer terminal is not initialized." >&2
+    return 1
+  fi
+
+  dialog --input-fd "$DIALOG_TTY_FD" "$@" \
+    1>&"$DIALOG_TTY_FD" \
+    2>&"$DIALOG_TTY_FD"
 }
 
 require_destructive_test_variables() {
@@ -140,6 +190,8 @@ initialize_runtime() {
   # Report the failing command and release resources acquired by this run.
   trap error_handler ERR
   trap cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
 
   if [ "$ALLOW_DESTRUCTIVE_TEST_MODE" = "true" ] &&
     { [ "$TEST_MODE" != "true" ] || [ "$DRY_RUN" = "true" ]; }; then
@@ -174,6 +226,7 @@ initialize_runtime() {
       echo "Check your internet connection and try again."
       exit 1
     fi
+    initialize_dialog_tty
   fi
 }
 
@@ -573,7 +626,7 @@ confirm_destructive_action() {
   fi
 
   device_summary="$(lsblk -dno NAME,SIZE,MODEL "$target_device" | sed 's/[[:space:]]\+/ /g')"
-  dialog --clear --defaultno --yesno \
+  dialog_display --clear --defaultno --yesno \
     "This will permanently erase all data on:\n\n$device_summary\n\nContinue?" \
     "$DIALOG_CONFIRM_HEIGHT" "$DIALOG_CONFIRM_WIDTH" || exit 1
 }
@@ -622,9 +675,9 @@ run_preflight_checks
 if [ "$TEST_MODE" = "true" ]; then
   mode="${TEST_MODE_MODE:-1}"
 else
-  mode=$(dialog --stdout --clear --menu "Select install mode" \
+  dialog_capture mode --clear --menu "Select install mode" \
     "$DIALOG_MENU_HEIGHT" "$DIALOG_MENU_WIDTH" "$DIALOG_MENU_ROWS" \
-    "1" "Minimal" "2" "Workstation" "3" "VirtualBox") || exit 1
+    "1" "Minimal" "2" "Workstation" "3" "VirtualBox" || exit 1
 fi
 if ! validate_mode "$mode"; then
   echo "Error: Invalid mode '$mode'. Must be 1, 2, or 3."
@@ -634,8 +687,8 @@ fi
 if [ "$TEST_MODE" = "true" ]; then
   hostname="${TEST_MODE_HOSTNAME:-testhost}"
 else
-  hostname=$(dialog --stdout --clear --inputbox "Enter hostname" \
-    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH") || exit 1
+  dialog_capture hostname --clear --inputbox "Enter hostname" \
+    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH" || exit 1
 fi
 [ -z "$hostname" ] && echo "hostname cannot be empty" && exit 1
 hostname="${hostname,,}"
@@ -647,8 +700,8 @@ fi
 if [ "$TEST_MODE" = "true" ]; then
   user="${TEST_MODE_USER:-testuser}"
 else
-  user=$(dialog --stdout --clear --inputbox "Enter username" \
-    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH") || exit 1
+  dialog_capture user --clear --inputbox "Enter username" \
+    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH" || exit 1
 fi
 [ -z "$user" ] && echo "username cannot be empty" && exit 1
 if ! validate_username "$user"; then
@@ -660,10 +713,10 @@ if [ "$TEST_MODE" = "true" ]; then
   password1="${TEST_MODE_PASSWORD:-testpass123}"
   password2="$password1"
 else
-  password1=$(dialog --stdout --clear --insecure --passwordbox "Enter password" \
-    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH") || exit 1
-  password2=$(dialog --stdout --clear --insecure --passwordbox "Enter password again" \
-    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH") || exit 1
+  dialog_capture password1 --clear --insecure --passwordbox "Enter password" \
+    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH" || exit 1
+  dialog_capture password2 --clear --insecure --passwordbox "Enter password again" \
+    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH" || exit 1
 fi
 [ -z "$password1" ] && echo "password cannot be empty" && exit 1
 if [ "$password1" != "$password2" ]; then echo "Passwords did not match"; exit 1; fi
@@ -692,9 +745,9 @@ else
     exit 1
   fi
 
-  device=$(dialog --stdout --clear --menu "Select installation disk" \
+  dialog_capture device --clear --menu "Select installation disk" \
     "$DIALOG_MENU_HEIGHT" "$DIALOG_MENU_WIDTH" "$DIALOG_MENU_ROWS" \
-    "${device_options[@]}") || exit 1
+    "${device_options[@]}" || exit 1
 fi
 validate_target_device "$device"
 if [ "$TEST_MODE" = "true" ] && [ "$DRY_RUN" = "false" ]; then
@@ -716,10 +769,10 @@ if [ "$TEST_MODE" = "true" ]; then
   password_luks1="${TEST_MODE_LUKS_PASSWORD:-lukspass123}"
   password_luks2="$password_luks1"
 else
-  password_luks1=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password" \
-    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH") || exit 1
-  password_luks2=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password again" \
-    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH") || exit 1
+  dialog_capture password_luks1 --clear --insecure --passwordbox "Enter disk encryption password" \
+    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH" || exit 1
+  dialog_capture password_luks2 --clear --insecure --passwordbox "Enter disk encryption password again" \
+    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH" || exit 1
 fi
 [ -z "$password_luks1" ] && echo "disk encryption password cannot be empty" && exit 1
 if [ "$password_luks1" != "$password_luks2" ]; then echo "Passwords did not match"; exit 1; fi
@@ -730,11 +783,11 @@ if [ "$mode" -eq 2 ] || [ "$mode" -eq 3 ]; then
   if [ "$TEST_MODE" = "true" ]; then
     video_driver="${TEST_MODE_VIDEO_DRIVER:-}"
   elif command -v lspci >/dev/null 2>&1 && lspci | grep -e VGA -e 3D | grep -q NVIDIA; then
-    video_driver=$(dialog --stdout --clear --menu "NVIDIA GPU detected. Select driver" \
+    dialog_capture video_driver --clear --menu "NVIDIA GPU detected. Select driver" \
       "$DIALOG_MENU_HEIGHT" "$DIALOG_MENU_WIDTH" "$DIALOG_MENU_ROWS" \
       "nvidia-open" "Open kernel modules (Turing+, recommended)" \
       "nvidia" "Proprietary (pre-Turing GPUs)" \
-      "none" "Skip (use nouveau/mesa)") || exit 1
+      "none" "Skip (use nouveau/mesa)" || exit 1
     if [ "$video_driver" = "none" ]; then
       video_driver=""
     fi
@@ -744,6 +797,9 @@ if [ "$mode" -eq 2 ] || [ "$mode" -eq 3 ]; then
     exit 1
   fi
 fi
+
+# Prompts are complete; close the dedicated terminal before logging begins.
+close_dialog_tty
 
 # Avoid writing logs during tests so assertions can inspect stdout/stderr directly.
 if [ "$TEST_MODE" != "true" ]; then
@@ -779,16 +835,18 @@ fi
 if [ "$DRY_RUN" = "true" ]; then
   dry_run_msg "Would open LUKS device $part_luks as cryptlvm"
 else
-  printf '%s' "$password_luks1" | cryptsetup open --key-file - "$part_luks" cryptlvm
+  # Arm cleanup before acquisition so partial success is still released.
   INSTALL_OPENED_LUKS=true
+  printf '%s' "$password_luks1" | cryptsetup open --key-file - "$part_luks" cryptlvm
   unset password_luks1 password_luks2
 fi
 
 run_cmd pvcreate --yes --force /dev/mapper/cryptlvm
-run_cmd vgcreate volgroup0 /dev/mapper/cryptlvm
 if [ "$DRY_RUN" = "false" ]; then
+  # ensure_install_names_available established that this name was unused.
   INSTALL_CREATED_VG=true
 fi
+run_cmd vgcreate volgroup0 /dev/mapper/cryptlvm
 
 run_cmd lvcreate -L "${swap_size_gib}G" volgroup0 -n swap
 run_cmd lvcreate -l 100%FREE volgroup0 -n root
@@ -797,14 +855,14 @@ run_cmd mkswap -f /dev/mapper/volgroup0-swap
 run_cmd mkfs.ext4 -F /dev/mapper/volgroup0-root
 run_cmd mkfs.vfat -F32 -n EFI "$part_efi"
 
-run_cmd mount /dev/mapper/volgroup0-root /mnt
 if [ "$DRY_RUN" = "false" ]; then
   INSTALL_MOUNTED_ROOT=true
 fi
-run_cmd swapon /dev/mapper/volgroup0-swap
+run_cmd mount /dev/mapper/volgroup0-root /mnt
 if [ "$DRY_RUN" = "false" ]; then
   INSTALL_ENABLED_SWAP=true
 fi
+run_cmd swapon /dev/mapper/volgroup0-swap
 run_cmd mkdir -p /mnt/boot
 run_cmd mount "$part_efi" /mnt/boot
 

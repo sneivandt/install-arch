@@ -56,8 +56,10 @@ The installer asks for:
 6. NVIDIA driver, when supported hardware is detected in a desktop mode
 
 Before changing the disk, it shows the selected device and requires
-confirmation. After passwords have been collected, output is written to
-`stdout.log` and `stderr.log` in the current directory.
+confirmation. Interactive prompts use the controlling terminal directly, so
+they work whether the script is piped to Bash, run through process substitution,
+or executed from a file. After passwords have been collected, output is written
+to `stdout.log` and `stderr.log` in the current directory.
 
 ## Install modes
 

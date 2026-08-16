@@ -325,6 +325,91 @@ test_dialog_dimensions_are_explicit() {
   test_pass "Dialog dimensions are explicit"
 }
 
+test_dialog_uses_explicit_tty_streams() {
+  local input_target
+  local output
+  local probe_file
+  local selected_device=""
+  local stderr_target
+  local stdout_target
+  local terminal_file
+
+  terminal_file="$(mktemp)"
+  probe_file="$(mktemp)"
+  exec {DIALOG_TTY_FD}<>"$terminal_file"
+  DIALOG_PROBE_FILE="$probe_file"
+
+  dialog() {
+    local dialog_pid="$BASHPID"
+    local input_fd=""
+    local input_path
+    local output_fd=""
+    local stderr_path
+    local stdout_path
+
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --input-fd)
+          input_fd="$2"
+          shift 2
+          ;;
+        --output-fd)
+          output_fd="$2"
+          shift 2
+          ;;
+        *)
+          shift
+          ;;
+      esac
+    done
+
+    input_path="$(readlink "/proc/$dialog_pid/fd/$input_fd")"
+    stdout_path="$(readlink "/proc/$dialog_pid/fd/1")"
+    stderr_path="$(readlink "/proc/$dialog_pid/fd/2")"
+    {
+      printf 'input=%s\n' "$input_path"
+      printf 'stdout=%s\n' "$stdout_path"
+      printf 'stderr=%s\n' "$stderr_path"
+    } > "$DIALOG_PROBE_FILE"
+    printf '/dev/testdisk' >&"$output_fd"
+  }
+
+  if ! dialog_capture selected_device --clear --menu disk 15 76 6 \
+    /dev/testdisk 100G </dev/null; then
+    unset -f dialog
+    close_dialog_tty
+    rm -f -- "$terminal_file" "$probe_file"
+    test_start "Dialog capture succeeds with redirected standard input"
+    test_fail "Dialog capture succeeds with redirected standard input"
+    return
+  fi
+
+  unset -f dialog
+  close_dialog_tty
+  output="$(<"$probe_file")"
+  input_target="$(sed -n 's/^input=//p' <<< "$output")"
+  stdout_target="$(sed -n 's/^stdout=//p' <<< "$output")"
+  stderr_target="$(sed -n 's/^stderr=//p' <<< "$output")"
+
+  assert_equals "/dev/testdisk" "$selected_device" \
+    "Dialog result uses a separate captured output descriptor"
+  assert_equals "$terminal_file" "$input_target" \
+    "Dialog keyboard input uses the dedicated terminal"
+  assert_equals "$terminal_file" "$stdout_target" \
+    "Dialog display output uses the dedicated terminal"
+  assert_equals "$terminal_file" "$stderr_target" \
+    "Dialog errors use the dedicated terminal"
+
+  test_start "Dialog invocations avoid non-portable --stdout"
+  if grep -q -- '--stdout' "$SCRIPT_DIR/../install-arch.sh"; then
+    test_fail "Dialog invocations avoid non-portable --stdout"
+  else
+    test_pass "Dialog invocations avoid non-portable --stdout"
+  fi
+
+  rm -f -- "$terminal_file" "$probe_file"
+}
+
 test_pacman_keyring_preparation_sequence() {
   local output
 
@@ -372,10 +457,15 @@ test_pacman_keyring_initialization_failure_is_clear() {
 }
 
 test_destructive_confirmation_cancel_aborts() {
+  local terminal_file
+
+  terminal_file="$(mktemp)"
   test_start "Canceling destructive confirmation aborts"
   if (
     TEST_MODE=false
     DRY_RUN=false
+    DIALOG_TTY_FD=""
+    exec {DIALOG_TTY_FD}<>"$terminal_file"
     lsblk() {
       printf '/dev/testdisk 100G Test Disk\n'
     }
@@ -389,6 +479,62 @@ test_destructive_confirmation_cancel_aborts() {
   else
     test_pass "Canceling destructive confirmation aborts"
   fi
+  rm -f -- "$terminal_file"
+}
+
+test_cleanup_releases_owned_resources_in_order() {
+  local cleanup_log
+  local output
+
+  cleanup_log="$(mktemp)"
+  if ! (
+    DRY_RUN=false
+    TEMP_SUDOERS_CREATED=false
+    INSTALL_ENABLED_SWAP=true
+    INSTALL_MOUNTED_ROOT=true
+    INSTALL_CREATED_VG=true
+    INSTALL_OPENED_LUKS=true
+    DIALOG_TTY_FD=""
+    swapoff() {
+      printf 'swapoff %s\n' "$*" >> "$cleanup_log"
+    }
+    mountpoint() {
+      return 0
+    }
+    umount() {
+      printf 'umount %s\n' "$*" >> "$cleanup_log"
+    }
+    vgchange() {
+      printf 'vgchange %s\n' "$*" >> "$cleanup_log"
+    }
+    cryptsetup() {
+      printf 'cryptsetup %s\n' "$*" >> "$cleanup_log"
+    }
+    cleanup
+  ); then
+    rm -f -- "$cleanup_log"
+    test_start "Cleanup releases installer-owned storage resources"
+    test_fail "Cleanup releases installer-owned storage resources"
+    return
+  fi
+
+  output="$(<"$cleanup_log")"
+  assert_contains "$output" "swapoff /dev/mapper/volgroup0-swap" \
+    "Cleanup disables installer-owned swap"
+  assert_contains "$output" "umount -R /mnt" \
+    "Cleanup recursively unmounts the installer target"
+  assert_contains "$output" "vgchange -an volgroup0" \
+    "Cleanup deactivates the installer-owned volume group"
+  assert_contains "$output" "cryptsetup close cryptlvm" \
+    "Cleanup closes the installer-owned LUKS mapping"
+  assert_occurs_before "$output" "swapoff" "umount" \
+    "Cleanup disables swap before unmounting"
+  assert_occurs_before "$output" "umount" "vgchange" \
+    "Cleanup unmounts before deactivating LVM"
+  assert_occurs_before "$output" "vgchange" "cryptsetup" \
+    "Cleanup deactivates LVM before closing LUKS"
+
+  rm -f -- "$cleanup_log"
 }
 
 test_swap_size_low_memory() {
@@ -536,9 +682,11 @@ test_shebang
 test_password_hashing_treats_options_as_data
 test_video_driver_validation
 test_dialog_dimensions_are_explicit
+test_dialog_uses_explicit_tty_streams
 test_pacman_keyring_preparation_sequence
 test_pacman_keyring_initialization_failure_is_clear
 test_destructive_confirmation_cancel_aborts
+test_cleanup_releases_owned_resources_in_order
 test_swap_size_low_memory
 test_swap_size_matches_midrange_memory
 test_swap_size_caps_high_memory
