@@ -96,6 +96,21 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local test_name="$3"
+
+  test_start "$test_name"
+  if ! grep -F -q -- "$needle" <<< "$haystack"; then
+    test_pass "$test_name"
+    return 0
+  else
+    test_fail "$test_name" "String unexpectedly contains '$needle'"
+    return 1
+  fi
+}
+
 assert_occurs_before() {
   local haystack="$1"
   local first="$2"

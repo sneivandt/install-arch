@@ -8,8 +8,10 @@ This project targets one specific setup. It is not a general-purpose Arch
 installer.
 
 > [!CAUTION]
-> The installer erases the entire selected disk. It does not support dual boot,
-> preserving existing partitions, or upgrading an existing system.
+> A normal installation erases the entire selected disk. It does not support
+> dual boot, preserving existing partitions, or upgrading an existing system.
+> The explicit `--resume` path only reopens and validates this installer's
+> existing layout; it does not repartition or format the disk.
 
 ## Requirements
 
@@ -63,15 +65,34 @@ separate major operations while commands such as `pacstrap`, filesystem tools,
 `mkinitcpio`, and GRUB keep their normal stdout/stderr attached to the terminal.
 
 Separately, the installer writes a diagnostic trace from startup to
-`/tmp/install-arch-debug.log`. It records high-level installer checkpoints and,
-for every dialog, its logical name, widget type, dimensions, option count,
-entry/exit state, exit status, and whether captured output was empty. Password
-contents are never written to this trace. If an interactive run appears stuck,
-press `Ctrl+C` and inspect the preserved trace:
+`/tmp/install-arch-debug.log`. It records high-level installer checkpoints,
+named configuration operations and failures, and, for every dialog, its logical
+name, widget type, dimensions, option count, entry/exit state, exit status, and
+whether captured output was empty. Password and encryption passphrase contents
+are never written to this trace. If an interactive run appears stuck, press
+`Ctrl+C` and inspect the preserved trace:
 
 ```bash
 cat /tmp/install-arch-debug.log
 ```
+
+### Resume after package installation
+
+If target-system configuration fails after `pacstrap`, cleanup leaves the disk
+unmounted and closes the installer-owned LVM and LUKS mappings. Retry from the
+same Arch ISO environment without repartitioning, formatting, or reinstalling
+packages with:
+
+```bash
+curl -fsSL https://git.io/vpvGR | bash -s -- --resume
+```
+
+Select the same mode and target disk and enter the same encryption passphrase.
+Resume mode validates the existing EFI partition, LUKS container, expected
+`volgroup0/root` and `volgroup0/swap` volumes, and the pacstrapped Arch base
+system before rerunning target configuration. It regenerates `fstab`
+atomically, so retrying does not append duplicate entries. If validation does
+not match this installer's layout, resume stops without formatting anything.
 
 ## Install modes
 

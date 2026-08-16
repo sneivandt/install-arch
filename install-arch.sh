@@ -14,6 +14,7 @@
 # Installer commands keep their normal terminal stdout/stderr. A separate
 # diagnostic trace is available from startup at /tmp/install-arch-debug.log.
 set -o errexit
+set -o errtrace
 set -o nounset
 set -o pipefail
 
@@ -21,6 +22,7 @@ set -o pipefail
 
 DRY_RUN=false
 TEST_MODE=false
+RESUME=false
 ALLOW_DESTRUCTIVE_TEST_MODE=false
 INSTALL_OPENED_LUKS=false
 INSTALL_CREATED_VG=false
@@ -30,6 +32,7 @@ TEMP_SUDOERS_CREATED=false
 DIALOG_TTY_FD=""
 DEBUG_LOG_PATH="/tmp/install-arch-debug.log"
 CURRENT_STAGE="runtime_setup"
+CURRENT_OPERATION="none"
 DIALOG_ACTIVE=false
 CURRENT_DIALOG_NAME="none"
 CURRENT_DIALOG_WIDGET="none"
@@ -54,13 +57,17 @@ parse_args() {
         TEST_MODE=true
         shift
         ;;
+      --resume)
+        RESUME=true
+        shift
+        ;;
       --allow-destructive-test-mode)
         ALLOW_DESTRUCTIVE_TEST_MODE=true
         shift
         ;;
       *)
         echo "Unknown option: $1"
-        echo "Usage: $0 [--dry-run] [--test-mode] [--allow-destructive-test-mode]"
+        echo "Usage: $0 [--resume] [--dry-run] [--test-mode] [--allow-destructive-test-mode]"
         exit 1
         ;;
     esac
@@ -105,8 +112,27 @@ handle_signal() {
 
 error_handler() {
   local exit_code=$?
-  debug_log "error event=command_failed exit_status=$exit_code stage=$CURRENT_STAGE line=${BASH_LINENO[0]}"
-  echo "$0: Error on line ${BASH_LINENO[0]}: ${BASH_COMMAND}" >&2
+  local failed_command="$BASH_COMMAND"
+  local failed_line="${BASH_LINENO[0]:-$LINENO}"
+  local failed_operation="$CURRENT_OPERATION"
+  local message
+
+  # Avoid recursively invoking the handler if reporting itself encounters an
+  # error. BASH_COMMAND is source text, so variable values such as passwords
+  # and passphrases are never expanded into the diagnostic log.
+  trap - ERR
+  set +o errexit
+  if [ "$failed_operation" = "none" ]; then
+    failed_operation="$failed_command"
+  fi
+  message="Error: Stage '$CURRENT_STAGE' failed during '$failed_operation' (line $failed_line, status $exit_code)."
+  debug_log "error event=command_failed exit_status=$exit_code stage=$CURRENT_STAGE line=$failed_line operation=$failed_operation command=$failed_command"
+  printf '%s\n' "$message" >&2
+  printf 'Failing command: %s\n' "$failed_command" >&2
+  printf 'Diagnostic log: %s\n' "$DEBUG_LOG_PATH" >&2
+  if [ "$CURRENT_STAGE" = "target_system_configuration" ] && [ "$RESUME" = "false" ]; then
+    printf 'The installed packages were preserved; rerun with --resume to retry configuration without repartitioning or pacstrap.\n' >&2
+  fi
   exit "$exit_code"
 }
 
@@ -582,6 +608,35 @@ run_cmd() {
   fi
 }
 
+run_required_step() {
+  local operation="$1"
+  shift
+
+  CURRENT_OPERATION="$operation"
+  debug_log "command event=start stage=$CURRENT_STAGE operation=$CURRENT_OPERATION"
+  "$@"
+  debug_log "command event=complete stage=$CURRENT_STAGE operation=$CURRENT_OPERATION"
+  CURRENT_OPERATION="none"
+}
+
+run_optional_step() {
+  local operation="$1"
+  shift
+  local exit_code
+
+  CURRENT_OPERATION="$operation"
+  debug_log "command event=start stage=$CURRENT_STAGE operation=$CURRENT_OPERATION optional=true"
+  if "$@"; then
+    debug_log "command event=complete stage=$CURRENT_STAGE operation=$CURRENT_OPERATION optional=true"
+  else
+    exit_code=$?
+    debug_log "warning event=optional_command_failed exit_status=$exit_code stage=$CURRENT_STAGE operation=$CURRENT_OPERATION"
+    printf 'Warning: Optional step failed during %s (status %s); continuing.\n' \
+      "$CURRENT_OPERATION" "$exit_code" >&2
+  fi
+  CURRENT_OPERATION="none"
+}
+
 dry_run_msg() {
   echo "[DRY-RUN] $*"
 }
@@ -616,12 +671,49 @@ append_file() {
   fi
 }
 
+generate_target_fstab() {
+  local fstab_tmp
+
+  if [ "$DRY_RUN" = "true" ]; then
+    dry_run_msg "Would generate and validate /mnt/etc/fstab"
+    return
+  fi
+
+  fstab_tmp="$(mktemp /mnt/etc/.fstab.install-arch.XXXXXX)"
+  if ! genfstab -U /mnt > "$fstab_tmp"; then
+    rm -f -- "$fstab_tmp"
+    return 1
+  fi
+  if ! awk '$2 == "/" { found=1 } END { exit !found }' "$fstab_tmp"; then
+    echo "Error: Generated fstab does not contain a root filesystem entry." >&2
+    rm -f -- "$fstab_tmp"
+    return 1
+  fi
+  chmod 0644 "$fstab_tmp"
+  mv -f -- "$fstab_tmp" /mnt/etc/fstab
+}
+
 enable_services() {
   local service
 
   for service in "$@"; do
-    in_target systemctl enable "$service"
+    run_required_step "arch-chroot /mnt systemctl enable $service" \
+      in_target systemctl enable "$service"
   done
+}
+
+configure_target_pacman() {
+  if [ "$DRY_RUN" = "true" ]; then
+    dry_run_msg "Would configure pacman options"
+    return
+  fi
+
+  if ! grep -Fxq 'Color' /mnt/etc/pacman.conf; then
+    sed -i '/^\[options\]/a Color' /mnt/etc/pacman.conf
+  fi
+  if ! grep -Fxq 'ILoveCandy' /mnt/etc/pacman.conf; then
+    sed -i '/^\[options\]/a ILoveCandy' /mnt/etc/pacman.conf
+  fi
 }
 
 require_command() {
@@ -643,6 +735,7 @@ run_preflight_checks() {
     curl
     findmnt
     genfstab
+    install
     lsblk
     lvcreate
     mkfs.ext4
@@ -757,6 +850,47 @@ ensure_install_names_available() {
   if vgs --noheadings volgroup0 >/dev/null 2>&1; then
     echo "Error: LVM volume group 'volgroup0' already exists. Remove or rename it before installing."
     exit 1
+  fi
+}
+
+validate_resume_partitions() {
+  local efi_partition="$1"
+  local luks_partition="$2"
+  local efi_type
+
+  if [ "$DRY_RUN" = "true" ]; then
+    dry_run_msg "Would validate existing EFI and LUKS partitions"
+    return
+  fi
+
+  if [ ! -b "$efi_partition" ] || [ ! -b "$luks_partition" ]; then
+    echo "Error: Resume requires existing EFI and LUKS partitions at '$efi_partition' and '$luks_partition'." >&2
+    return 1
+  fi
+  if ! cryptsetup isLuks "$luks_partition"; then
+    echo "Error: Resume refused because '$luks_partition' is not a LUKS container." >&2
+    return 1
+  fi
+  if ! efi_type="$(blkid -s TYPE -o value "$efi_partition")"; then
+    efi_type="unknown"
+  fi
+  if [ "$efi_type" != "vfat" ]; then
+    echo "Error: Resume refused because '$efi_partition' is '$efi_type', not vfat." >&2
+    return 1
+  fi
+}
+
+validate_resumed_target() {
+  if [ "$DRY_RUN" = "true" ]; then
+    dry_run_msg "Would validate the existing pacstrap installation"
+    return
+  fi
+
+  if [ ! -f /mnt/etc/os-release ] ||
+    [ ! -x /mnt/usr/bin/bash ] ||
+    [ ! -x /mnt/usr/bin/pacman ]; then
+    echo "Error: Resume refused because /mnt does not contain a complete Arch base installation." >&2
+    return 1
   fi
 }
 
@@ -900,17 +1034,23 @@ if [ "$TEST_MODE" = "true" ] && [ "$DRY_RUN" = "false" ]; then
     exit 1
   fi
 fi
-debug_checkpoint "destructive_confirmation"
-confirm_destructive_action "$device"
-debug_checkpoint "destructive_confirmation_complete"
-ensure_install_names_available
-
-debug_checkpoint "calculating_storage_layout"
 part_efi="$(get_partition_name "$device" 1)"
 part_luks="$(get_partition_name "$device" 2)"
-total_memory_kib="$(get_total_memory_kib)"
-target_size_bytes="$(get_target_size_bytes "$device")"
-swap_size_gib="$(calculate_swap_size_gib "$total_memory_kib" "$target_size_bytes")"
+if [ "$RESUME" = "true" ]; then
+  debug_checkpoint "resume_validation"
+  ensure_install_names_available
+  validate_resume_partitions "$part_efi" "$part_luks"
+else
+  debug_checkpoint "destructive_confirmation"
+  confirm_destructive_action "$device"
+  debug_checkpoint "destructive_confirmation_complete"
+  ensure_install_names_available
+
+  debug_checkpoint "calculating_storage_layout"
+  total_memory_kib="$(get_total_memory_kib)"
+  target_size_bytes="$(get_target_size_bytes "$device")"
+  swap_size_gib="$(calculate_swap_size_gib "$total_memory_kib" "$target_size_bytes")"
+fi
 
 if [ "$TEST_MODE" = "true" ]; then
   password_luks1="${TEST_MODE_LUKS_PASSWORD:-lukspass123}"
@@ -958,57 +1098,86 @@ debug_checkpoint "interactive_prompts_complete"
 close_dialog_tty
 
 # Disk provisioning
-# Create ESP + LUKS2-on-LVM layout and mount it at /mnt.
+# Create a new ESP + LUKS2-on-LVM layout, or reopen the existing layout when
+# resuming after pacstrap. Both paths converge before target configuration.
 
-debug_checkpoint "partitioning"
-if [ "$DRY_RUN" = "true" ]; then
-  dry_run_msg "Would wipe signatures and create GPT partitions on $device"
+if [ "$RESUME" = "true" ]; then
+  debug_checkpoint "resuming_storage"
+  if [ "$DRY_RUN" = "true" ]; then
+    dry_run_msg "Would open existing LUKS device $part_luks as cryptlvm"
+  else
+    INSTALL_OPENED_LUKS=true
+    CURRENT_OPERATION="cryptsetup open $part_luks as cryptlvm (passphrase via stdin)"
+    printf '%s' "$password_luks1" | cryptsetup open --key-file - "$part_luks" cryptlvm
+    CURRENT_OPERATION="none"
+    unset password_luks1 password_luks2
+  fi
+
+  if [ "$DRY_RUN" = "false" ]; then
+    # Arm cleanup before activation so a partial vgchange is still reversed.
+    INSTALL_CREATED_VG=true
+  fi
+  run_cmd vgchange -ay volgroup0
+  if [ "$DRY_RUN" = "false" ] &&
+    { [ ! -b /dev/mapper/volgroup0-root ] || [ ! -b /dev/mapper/volgroup0-swap ]; }; then
+    echo "Error: Resume requires volgroup0/root and volgroup0/swap logical volumes." >&2
+    exit 1
+  fi
 else
-  wipefs --all --force "$device"
-  sfdisk --wipe always --wipe-partitions always "$device" <<'EOF'
+  debug_checkpoint "partitioning"
+  if [ "$DRY_RUN" = "true" ]; then
+    dry_run_msg "Would wipe signatures and create GPT partitions on $device"
+  else
+    wipefs --all --force "$device"
+    sfdisk --wipe always --wipe-partitions always "$device" <<'EOF'
 label: gpt
 
 size=512MiB, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B
 type=CA7D7CCB-63ED-4C53-861C-1742536059CC
 EOF
-  partx --update "$device"
-  udevadm settle
-  wait_for_block_device "$part_efi"
-  wait_for_block_device "$part_luks"
+    partx --update "$device"
+    udevadm settle
+    wait_for_block_device "$part_efi"
+    wait_for_block_device "$part_luks"
+  fi
+
+  debug_checkpoint "formatting_luks"
+  if [ "$DRY_RUN" = "true" ]; then
+    dry_run_msg "Would encrypt $part_luks with LUKS2"
+  else
+    CURRENT_OPERATION="cryptsetup luksFormat $part_luks (passphrase via stdin)"
+    printf '%s' "$password_luks1" | cryptsetup luksFormat --type luks2 --batch-mode --key-file - "$part_luks"
+    CURRENT_OPERATION="none"
+  fi
+
+  debug_checkpoint "opening_luks"
+  if [ "$DRY_RUN" = "true" ]; then
+    dry_run_msg "Would open LUKS device $part_luks as cryptlvm"
+  else
+    # Arm cleanup before acquisition so partial success is still released.
+    INSTALL_OPENED_LUKS=true
+    CURRENT_OPERATION="cryptsetup open $part_luks as cryptlvm (passphrase via stdin)"
+    printf '%s' "$password_luks1" | cryptsetup open --key-file - "$part_luks" cryptlvm
+    CURRENT_OPERATION="none"
+    unset password_luks1 password_luks2
+  fi
+
+  debug_checkpoint "configuring_lvm"
+  run_cmd pvcreate --yes --force /dev/mapper/cryptlvm
+  if [ "$DRY_RUN" = "false" ]; then
+    # ensure_install_names_available established that this name was unused.
+    INSTALL_CREATED_VG=true
+  fi
+  run_cmd vgcreate volgroup0 /dev/mapper/cryptlvm
+
+  run_cmd lvcreate -L "${swap_size_gib}G" volgroup0 -n swap
+  run_cmd lvcreate -l 100%FREE volgroup0 -n root
+
+  debug_checkpoint "formatting_filesystems"
+  run_cmd mkswap -f /dev/mapper/volgroup0-swap
+  run_cmd mkfs.ext4 -F /dev/mapper/volgroup0-root
+  run_cmd mkfs.vfat -F32 -n EFI "$part_efi"
 fi
-
-debug_checkpoint "formatting_luks"
-if [ "$DRY_RUN" = "true" ]; then
-  dry_run_msg "Would encrypt $part_luks with LUKS2"
-else
-  printf '%s' "$password_luks1" | cryptsetup luksFormat --type luks2 --batch-mode --key-file - "$part_luks"
-fi
-
-debug_checkpoint "opening_luks"
-if [ "$DRY_RUN" = "true" ]; then
-  dry_run_msg "Would open LUKS device $part_luks as cryptlvm"
-else
-  # Arm cleanup before acquisition so partial success is still released.
-  INSTALL_OPENED_LUKS=true
-  printf '%s' "$password_luks1" | cryptsetup open --key-file - "$part_luks" cryptlvm
-  unset password_luks1 password_luks2
-fi
-
-debug_checkpoint "configuring_lvm"
-run_cmd pvcreate --yes --force /dev/mapper/cryptlvm
-if [ "$DRY_RUN" = "false" ]; then
-  # ensure_install_names_available established that this name was unused.
-  INSTALL_CREATED_VG=true
-fi
-run_cmd vgcreate volgroup0 /dev/mapper/cryptlvm
-
-run_cmd lvcreate -L "${swap_size_gib}G" volgroup0 -n swap
-run_cmd lvcreate -l 100%FREE volgroup0 -n root
-
-debug_checkpoint "formatting_filesystems"
-run_cmd mkswap -f /dev/mapper/volgroup0-swap
-run_cmd mkfs.ext4 -F /dev/mapper/volgroup0-root
-run_cmd mkfs.vfat -F32 -n EFI "$part_efi"
 
 debug_checkpoint "mounting_filesystems"
 if [ "$DRY_RUN" = "false" ]; then
@@ -1021,26 +1190,30 @@ fi
 run_cmd swapon /dev/mapper/volgroup0-swap
 run_cmd mkdir -p /mnt/boot
 run_cmd mount "$part_efi" /mnt/boot
+if [ "$RESUME" = "true" ]; then
+  validate_resumed_target
+fi
 
 # Package installation
 # Refresh package metadata/keyring, select packages for the chosen mode, then pacstrap.
 
-debug_checkpoint "preparing_package_mirrors"
-if [ "$DRY_RUN" = "true" ]; then
-  dry_run_msg "Would update mirrorlist"
-else
-  mirrorlist_tmp="$(mktemp)"
-  curl -fL --show-error --progress-bar \
-    'https://archlinux.org/mirrorlist/?country=US&protocol=https&ip_version=4' \
-    | sed 's/^#Server/Server/' > "$mirrorlist_tmp"
-  if ! grep -q '^Server = ' "$mirrorlist_tmp"; then
-    echo "Error: Downloaded mirrorlist did not contain any enabled HTTPS mirrors."
+if [ "$RESUME" = "false" ]; then
+  debug_checkpoint "preparing_package_mirrors"
+  if [ "$DRY_RUN" = "true" ]; then
+    dry_run_msg "Would update mirrorlist"
+  else
+    mirrorlist_tmp="$(mktemp)"
+    curl -fL --show-error --progress-bar \
+      'https://archlinux.org/mirrorlist/?country=US&protocol=https&ip_version=4' \
+      | sed 's/^#Server/Server/' > "$mirrorlist_tmp"
+    if ! grep -q '^Server = ' "$mirrorlist_tmp"; then
+      echo "Error: Downloaded mirrorlist did not contain any enabled HTTPS mirrors."
+      rm -f "$mirrorlist_tmp"
+      exit 1
+    fi
+    install -m 0644 "$mirrorlist_tmp" /etc/pacman.d/mirrorlist
     rm -f "$mirrorlist_tmp"
-    exit 1
   fi
-  install -m 0644 "$mirrorlist_tmp" /etc/pacman.d/mirrorlist
-  rm -f "$mirrorlist_tmp"
-fi
 
 cpu_vendor=""
 if [ "$DRY_RUN" = "false" ] && [ "$TEST_MODE" = "false" ]; then
@@ -1080,43 +1253,43 @@ esac
 
 debug_checkpoint "package_installation"
 run_cmd pacstrap -K /mnt "${packages[@]}"
+fi
 
 # Target system configuration
 # Write base OS configuration and enable services before user bootstrap.
 
 debug_checkpoint "target_system_configuration"
-if [ "$DRY_RUN" = "true" ]; then
-  dry_run_msg "Would generate fstab"
-else
-  genfstab -U /mnt >> /mnt/etc/fstab
-fi
+run_required_step "generate /mnt/etc/fstab with genfstab -U /mnt" generate_target_fstab
 
-in_target ln -sfT dash /usr/bin/sh
+run_required_step "arch-chroot /mnt ln -sfT dash /usr/bin/sh" \
+  in_target ln -sfT dash /usr/bin/sh
 
-write_file /mnt/etc/hostname <<EOF
+run_required_step "write /mnt/etc/hostname" write_file /mnt/etc/hostname <<EOF
 $hostname
 EOF
-append_file /mnt/etc/hosts <<EOF
+run_required_step "write /mnt/etc/hosts" write_file /mnt/etc/hosts <<EOF
 127.0.0.1 localhost.localdomain localhost
 ::1 localhost.localdomain localhost
 127.0.0.1 $hostname.localdomain $hostname
 EOF
 
-write_file /mnt/etc/locale.gen <<'EOF'
+run_required_step "write /mnt/etc/locale.gen" write_file /mnt/etc/locale.gen <<'EOF'
 en_US.UTF-8 UTF-8
 EOF
-in_target locale-gen
+run_required_step "arch-chroot /mnt locale-gen" in_target locale-gen
 
 # NetworkManager delegates DNS to resolved; allow-downgrade avoids strict DNSSEC
 # failures on unsigned or misconfigured zones while still validating when possible.
-write_file /mnt/etc/systemd/resolved.conf <<'EOF'
+run_required_step "write /mnt/etc/systemd/resolved.conf" \
+  write_file /mnt/etc/systemd/resolved.conf <<'EOF'
 [Resolve]
 DNS=8.8.8.8 8.8.4.4
 FallbackDNS=1.1.1.1 1.0.0.1
 DNSSEC=allow-downgrade
 DNSOverTLS=opportunistic
 EOF
-write_file /mnt/etc/NetworkManager/conf.d/dns.conf <<'EOF'
+run_required_step "write /mnt/etc/NetworkManager/conf.d/dns.conf" \
+  write_file /mnt/etc/NetworkManager/conf.d/dns.conf <<'EOF'
 [main]
 dns=systemd-resolved
 EOF
@@ -1125,13 +1298,16 @@ EOF
 # amixer's quiet flag intentionally avoids printing an unhelpful mixer dump.
 case "$mode" in
   2|3)
-    in_target amixer -q sset Master 100%
-    in_target alsactl store
+    run_optional_step "arch-chroot /mnt amixer -q sset Master 100%" \
+      in_target amixer -q sset Master 100%
+    run_optional_step "arch-chroot /mnt alsactl store" \
+      in_target alsactl store
     ;;
 esac
 
 # The installer is opinionated; adjust this before running for other regions.
-in_target ln -sf /usr/share/zoneinfo/US/Pacific /etc/localtime
+run_required_step "arch-chroot /mnt set US/Pacific timezone" \
+  in_target ln -sf /usr/share/zoneinfo/US/Pacific /etc/localtime
 
 enable_services \
   NetworkManager.service \
@@ -1144,11 +1320,15 @@ enable_services \
   fstrim.timer \
   reflector.timer
 
-in_target ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+run_required_step "arch-chroot /mnt link systemd-resolved resolv.conf" \
+  in_target ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 
-in_target ufw default deny incoming
-in_target ufw default allow outgoing
-in_target ufw --force enable
+run_required_step "arch-chroot /mnt ufw default deny incoming" \
+  in_target ufw default deny incoming
+run_required_step "arch-chroot /mnt ufw default allow outgoing" \
+  in_target ufw default allow outgoing
+run_required_step "arch-chroot /mnt ufw --force enable" \
+  in_target ufw --force enable
 
 if [ "$mode" -eq 3 ]; then
   enable_services vboxservice.service
@@ -1156,14 +1336,11 @@ fi
 
 # Pacman policy
 
-if [ "$DRY_RUN" = "true" ]; then
-  dry_run_msg "Would configure pacman options"
-else
-  sed -i '/^\[options\]/a Color\nILoveCandy' /mnt/etc/pacman.conf
-fi
+run_required_step "configure /mnt/etc/pacman.conf options" configure_target_pacman
 
 # Keep /bin/sh pointed at dash even after bash package transactions.
-write_file /mnt/etc/pacman.d/hooks/dash.hook <<'EOF'
+run_required_step "write /mnt/etc/pacman.d/hooks/dash.hook" \
+  write_file /mnt/etc/pacman.d/hooks/dash.hook <<'EOF'
 [Trigger]
 Type = Package
 Operation = Install
@@ -1177,7 +1354,8 @@ Depends = dash
 EOF
 
 # Retain a small rollback window without letting the package cache grow forever.
-write_file /mnt/etc/pacman.d/hooks/paccache.hook <<'EOF'
+run_required_step "write /mnt/etc/pacman.d/hooks/paccache.hook" \
+  write_file /mnt/etc/pacman.d/hooks/paccache.hook <<'EOF'
 [Trigger]
 Operation = Remove
 Operation = Install
@@ -1194,7 +1372,8 @@ EOF
 # Hardening and maintenance
 # Apply baseline kernel/network hardening plus maintenance service config.
 
-write_file /mnt/etc/sysctl.d/99-security.conf <<'EOF'
+run_required_step "write /mnt/etc/sysctl.d/99-security.conf" \
+  write_file /mnt/etc/sysctl.d/99-security.conf <<'EOF'
 # Kernel hardening settings for improved security
 
 # Prevent kernel pointer leaks
@@ -1248,7 +1427,8 @@ fs.suid_dumpable = 0
 kernel.randomize_va_space = 2
 EOF
 
-write_file /mnt/etc/fail2ban/jail.local <<'EOF'
+run_required_step "write /mnt/etc/fail2ban/jail.local" \
+  write_file /mnt/etc/fail2ban/jail.local <<'EOF'
 [DEFAULT]
 # Ban hosts for 1 hour (3600 seconds)
 bantime = 3600
@@ -1265,7 +1445,8 @@ port = ssh
 filter = sshd
 EOF
 
-write_file /mnt/etc/xdg/reflector/reflector.conf <<'EOF'
+run_required_step "write /mnt/etc/xdg/reflector/reflector.conf" \
+  write_file /mnt/etc/xdg/reflector/reflector.conf <<'EOF'
 # Reflector configuration for automatic mirror updates
 --save /etc/pacman.d/mirrorlist
 --protocol https

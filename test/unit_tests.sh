@@ -800,6 +800,108 @@ test_dotfiles_bootstrap_desktop() {
     "Desktop mode uses the desktop dotfiles profile"
 }
 
+test_target_failure_reports_operation_and_output() {
+  local console_log
+  local debug_log_path
+  local exit_code
+  local output
+  local debug_output
+
+  console_log="$(mktemp)"
+  debug_log_path="$(mktemp)"
+  (
+    set -o errexit
+    set -o errtrace
+    DEBUG_LOG_PATH="$debug_log_path"
+    CURRENT_STAGE="target_system_configuration"
+    CURRENT_OPERATION="none"
+    TEST_MODE=true
+    RESUME=false
+    # shellcheck disable=SC2329 # Invoked indirectly by run_required_step.
+    mocked_target_failure() {
+      echo "mock target stdout"
+      echo "mock target stderr" >&2
+      return 23
+    }
+    trap error_handler ERR
+    run_required_step "arch-chroot /mnt locale-gen" mocked_target_failure
+  ) > "$console_log" 2>&1
+  exit_code=$?
+
+  output="$(<"$console_log")"
+  debug_output="$(<"$debug_log_path")"
+  assert_equals "23" "$exit_code" "Target command failure preserves its exit status"
+  assert_contains "$output" "mock target stdout" \
+    "Target command stdout remains visible on failure"
+  assert_contains "$output" "mock target stderr" \
+    "Target command stderr remains visible on failure"
+  assert_contains "$output" "Stage 'target_system_configuration' failed during 'arch-chroot /mnt locale-gen'" \
+    "Target command failure identifies the exact operation"
+  assert_contains "$debug_output" "exit_status=23 stage=target_system_configuration" \
+    "Target command failure is written to the debug log"
+  assert_contains "$debug_output" "operation=arch-chroot /mnt locale-gen" \
+    "Debug log identifies the failed target operation"
+
+  rm -f -- "$console_log" "$debug_log_path"
+}
+
+test_missing_alsa_control_is_nonfatal() {
+  local debug_log_path
+  local output
+
+  debug_log_path="$(mktemp)"
+  output="$({
+    DEBUG_LOG_PATH="$debug_log_path"
+    CURRENT_STAGE="target_system_configuration"
+    # shellcheck disable=SC2329 # Invoked indirectly by run_optional_step.
+    mocked_amixer_failure() {
+      echo "amixer: Unable to find simple control 'Master'" >&2
+      return 1
+    }
+    run_optional_step "arch-chroot /mnt amixer -q sset Master 100%" mocked_amixer_failure
+    echo "configuration continued"
+  } 2>&1)"
+
+  assert_contains "$output" "Unable to find simple control 'Master'" \
+    "ALSA failure output remains visible"
+  assert_contains "$output" "Optional step failed during arch-chroot /mnt amixer -q sset Master 100%" \
+    "Missing ALSA Master control produces a clear warning"
+  assert_contains "$output" "configuration continued" \
+    "Missing ALSA Master control does not abort configuration"
+
+  rm -f -- "$debug_log_path"
+}
+
+test_resume_skips_destructive_and_package_stages() {
+  local output
+  local script_path="$SCRIPT_DIR/../install-arch.sh"
+
+  output=$(
+    TEST_MODE_MODE="2" \
+    TEST_MODE_HOSTNAME="testhost" \
+    TEST_MODE_USER="testuser" \
+    TEST_MODE_PASSWORD="testpass" \
+    TEST_MODE_DEVICE="/dev/loop0" \
+    TEST_MODE_LUKS_PASSWORD="lukspass" \
+      "$script_path" --test-mode --dry-run --resume 2>&1
+  )
+
+  assert_contains "$output" "Would validate existing EFI and LUKS partitions" \
+    "Resume validates the existing encrypted layout"
+  assert_contains "$output" "Would open existing LUKS device /dev/loop0p2 as cryptlvm" \
+    "Resume reopens the existing LUKS container"
+  assert_contains "$output" "vgchange -ay volgroup0" \
+    "Resume activates the existing volume group"
+  assert_not_contains "$output" "pacstrap -K" \
+    "Resume skips package installation"
+  assert_not_contains "$output" "sfdisk --wipe" \
+    "Resume skips partitioning"
+  assert_not_contains "$output" "cryptsetup luksFormat" \
+    "Resume skips LUKS formatting"
+  assert_not_contains "$output" "mkfs.ext4" \
+    "Resume skips filesystem formatting"
+}
+
 # Run all tests
 test_device_prefix_nvme
 test_device_prefix_sata
@@ -843,6 +945,9 @@ test_stdin_execution
 test_dry_run_uses_calculated_swap_size
 test_dotfiles_bootstrap_minimal
 test_dotfiles_bootstrap_desktop
+test_target_failure_reports_operation_and_output
+test_missing_alsa_control_is_nonfatal
+test_resume_skips_destructive_and_package_stages
 
 # Print summary and exit with appropriate code
 echo ""
