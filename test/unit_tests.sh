@@ -304,6 +304,93 @@ test_video_driver_validation() {
   assert_command_fails "Pacstrap options are rejected as video drivers" validate_video_driver "--overwrite"
 }
 
+test_dialog_dimensions_are_explicit() {
+  local dimension
+
+  for dimension in \
+    "$DIALOG_MENU_HEIGHT" \
+    "$DIALOG_MENU_WIDTH" \
+    "$DIALOG_MENU_ROWS" \
+    "$DIALOG_INPUT_HEIGHT" \
+    "$DIALOG_INPUT_WIDTH" \
+    "$DIALOG_CONFIRM_HEIGHT" \
+    "$DIALOG_CONFIRM_WIDTH"; do
+    if ! [[ "$dimension" =~ ^[1-9][0-9]*$ ]]; then
+      test_fail "Dialog dimensions are explicit" "Invalid dimension: $dimension"
+      return
+    fi
+  done
+
+  test_start "Dialog dimensions are explicit"
+  test_pass "Dialog dimensions are explicit"
+}
+
+test_pacman_keyring_preparation_sequence() {
+  local output
+
+  output=$(
+    pacman-key() {
+      printf 'pacman-key %s\n' "$*"
+    }
+    pacman() {
+      printf 'pacman %s\n' "$*"
+    }
+    prepare_pacman_keyring
+  )
+
+  assert_contains "$output" "pacman-key --init" \
+    "Pacman keyring preparation initializes the keyring"
+  assert_contains "$output" "pacman-key --populate archlinux" \
+    "Pacman keyring preparation populates Arch trusted keys"
+  assert_contains "$output" "pacman -Sy --needed --noconfirm archlinux-keyring" \
+    "Pacman keyring preparation updates archlinux-keyring"
+  assert_occurs_before "$output" "pacman-key --init" "pacman-key --populate archlinux" \
+    "Pacman keyring initialization precedes population"
+  assert_occurs_before "$output" "pacman-key --populate archlinux" "pacman -Sy --needed --noconfirm archlinux-keyring" \
+    "Pacman keyring population precedes package update"
+}
+
+test_pacman_keyring_initialization_failure_is_clear() {
+  local output
+  local status
+
+  output=$(
+    exec 2>&1
+    pacman-key() {
+      return 1
+    }
+    pacman() {
+      return 0
+    }
+    prepare_pacman_keyring
+  )
+  status=$?
+
+  assert_equals "1" "$status" "Pacman keyring initialization failure is fatal"
+  assert_contains "$output" "Failed to initialize the pacman keyring" \
+    "Pacman keyring initialization failure is clear"
+}
+
+test_destructive_confirmation_cancel_aborts() {
+  test_start "Canceling destructive confirmation aborts"
+  if (
+    TEST_MODE=false
+    DRY_RUN=false
+    lsblk() {
+      printf '/dev/testdisk 100G Test Disk\n'
+    }
+    dialog() {
+      return 1
+    }
+    confirm_destructive_action /dev/testdisk
+  ); then
+    test_fail "Canceling destructive confirmation aborts" \
+      "Confirmation cancellation returned success"
+  else
+    test_pass "Canceling destructive confirmation aborts"
+  fi
+}
+
 test_swap_size_low_memory() {
   local result
 
@@ -448,6 +535,10 @@ test_test_mode_vars
 test_shebang
 test_password_hashing_treats_options_as_data
 test_video_driver_validation
+test_dialog_dimensions_are_explicit
+test_pacman_keyring_preparation_sequence
+test_pacman_keyring_initialization_failure_is_clear
+test_destructive_confirmation_cancel_aborts
 test_swap_size_low_memory
 test_swap_size_matches_midrange_memory
 test_swap_size_caps_high_memory

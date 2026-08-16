@@ -27,6 +27,15 @@ INSTALL_ENABLED_SWAP=false
 INSTALL_MOUNTED_ROOT=false
 TEMP_SUDOERS_CREATED=false
 
+# Explicit dimensions avoid broken dialog autosizing on the Arch live ISO.
+DIALOG_MENU_HEIGHT=15
+DIALOG_MENU_WIDTH=76
+DIALOG_MENU_ROWS=6
+DIALOG_INPUT_HEIGHT=8
+DIALOG_INPUT_WIDTH=50
+DIALOG_CONFIRM_HEIGHT=13
+DIALOG_CONFIRM_WIDTH=76
+
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -101,6 +110,30 @@ require_destructive_test_variables() {
   done
 }
 
+prepare_pacman_keyring() {
+  if ! command -v pacman-key >/dev/null 2>&1; then
+    echo "Error: pacman-key is required to initialize the Arch Linux package keyring." >&2
+    return 1
+  fi
+  if ! command -v pacman >/dev/null 2>&1; then
+    echo "Error: pacman is required to update the Arch Linux package keyring." >&2
+    return 1
+  fi
+
+  if ! pacman-key --init; then
+    echo "Error: Failed to initialize the pacman keyring." >&2
+    return 1
+  fi
+  if ! pacman-key --populate archlinux; then
+    echo "Error: Failed to populate the pacman keyring with Arch Linux trusted keys." >&2
+    return 1
+  fi
+  if ! pacman -Sy --needed --noconfirm archlinux-keyring; then
+    echo "Error: Failed to install or update archlinux-keyring." >&2
+    return 1
+  fi
+}
+
 initialize_runtime() {
   parse_args "$@"
 
@@ -132,7 +165,11 @@ initialize_runtime() {
       echo "Error: UEFI boot mode is required. Reboot the installer media in UEFI mode."
       exit 1
     fi
-    if ! pacman -Sy --noconfirm dialog; then
+    if ! prepare_pacman_keyring; then
+      echo "Error: Pacman keyring preparation failed. Cannot install installer dependencies." >&2
+      exit 1
+    fi
+    if ! pacman -Sy --needed --noconfirm dialog; then
       echo "Error: Failed to install dialog. Cannot proceed with interactive installation."
       echo "Check your internet connection and try again."
       exit 1
@@ -537,7 +574,8 @@ confirm_destructive_action() {
 
   device_summary="$(lsblk -dno NAME,SIZE,MODEL "$target_device" | sed 's/[[:space:]]\+/ /g')"
   dialog --clear --defaultno --yesno \
-    "This will permanently erase all data on:\n\n$device_summary\n\nContinue?" 0 0 || exit 1
+    "This will permanently erase all data on:\n\n$device_summary\n\nContinue?" \
+    "$DIALOG_CONFIRM_HEIGHT" "$DIALOG_CONFIRM_WIDTH" || exit 1
 }
 
 ensure_install_names_available() {
@@ -584,7 +622,9 @@ run_preflight_checks
 if [ "$TEST_MODE" = "true" ]; then
   mode="${TEST_MODE_MODE:-1}"
 else
-  mode=$(dialog --stdout --clear --menu "Select install mode" 0 0 0 "1" "Minimal" "2" "Workstation" "3" "VirtualBox") || exit 1
+  mode=$(dialog --stdout --clear --menu "Select install mode" \
+    "$DIALOG_MENU_HEIGHT" "$DIALOG_MENU_WIDTH" "$DIALOG_MENU_ROWS" \
+    "1" "Minimal" "2" "Workstation" "3" "VirtualBox") || exit 1
 fi
 if ! validate_mode "$mode"; then
   echo "Error: Invalid mode '$mode'. Must be 1, 2, or 3."
@@ -594,7 +634,8 @@ fi
 if [ "$TEST_MODE" = "true" ]; then
   hostname="${TEST_MODE_HOSTNAME:-testhost}"
 else
-  hostname=$(dialog --stdout --clear --inputbox "Enter hostname" 0 40) || exit 1
+  hostname=$(dialog --stdout --clear --inputbox "Enter hostname" \
+    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH") || exit 1
 fi
 [ -z "$hostname" ] && echo "hostname cannot be empty" && exit 1
 hostname="${hostname,,}"
@@ -606,7 +647,8 @@ fi
 if [ "$TEST_MODE" = "true" ]; then
   user="${TEST_MODE_USER:-testuser}"
 else
-  user=$(dialog --stdout --clear --inputbox "Enter username" 0 40) || exit 1
+  user=$(dialog --stdout --clear --inputbox "Enter username" \
+    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH") || exit 1
 fi
 [ -z "$user" ] && echo "username cannot be empty" && exit 1
 if ! validate_username "$user"; then
@@ -618,8 +660,10 @@ if [ "$TEST_MODE" = "true" ]; then
   password1="${TEST_MODE_PASSWORD:-testpass123}"
   password2="$password1"
 else
-  password1=$(dialog --stdout --clear --insecure --passwordbox "Enter password" 0 40) || exit 1
-  password2=$(dialog --stdout --clear --insecure --passwordbox "Enter password again" 0 40) || exit 1
+  password1=$(dialog --stdout --clear --insecure --passwordbox "Enter password" \
+    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH") || exit 1
+  password2=$(dialog --stdout --clear --insecure --passwordbox "Enter password again" \
+    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH") || exit 1
 fi
 [ -z "$password1" ] && echo "password cannot be empty" && exit 1
 if [ "$password1" != "$password2" ]; then echo "Passwords did not match"; exit 1; fi
@@ -648,7 +692,9 @@ else
     exit 1
   fi
 
-  device=$(dialog --stdout --clear --menu "Select installation disk" 0 0 0 "${device_options[@]}") || exit 1
+  device=$(dialog --stdout --clear --menu "Select installation disk" \
+    "$DIALOG_MENU_HEIGHT" "$DIALOG_MENU_WIDTH" "$DIALOG_MENU_ROWS" \
+    "${device_options[@]}") || exit 1
 fi
 validate_target_device "$device"
 if [ "$TEST_MODE" = "true" ] && [ "$DRY_RUN" = "false" ]; then
@@ -670,8 +716,10 @@ if [ "$TEST_MODE" = "true" ]; then
   password_luks1="${TEST_MODE_LUKS_PASSWORD:-lukspass123}"
   password_luks2="$password_luks1"
 else
-  password_luks1=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password" 0 40) || exit 1
-  password_luks2=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password again" 0 40) || exit 1
+  password_luks1=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password" \
+    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH") || exit 1
+  password_luks2=$(dialog --stdout --clear --insecure --passwordbox "Enter disk encryption password again" \
+    "$DIALOG_INPUT_HEIGHT" "$DIALOG_INPUT_WIDTH") || exit 1
 fi
 [ -z "$password_luks1" ] && echo "disk encryption password cannot be empty" && exit 1
 if [ "$password_luks1" != "$password_luks2" ]; then echo "Passwords did not match"; exit 1; fi
@@ -682,7 +730,8 @@ if [ "$mode" -eq 2 ] || [ "$mode" -eq 3 ]; then
   if [ "$TEST_MODE" = "true" ]; then
     video_driver="${TEST_MODE_VIDEO_DRIVER:-}"
   elif command -v lspci >/dev/null 2>&1 && lspci | grep -e VGA -e 3D | grep -q NVIDIA; then
-    video_driver=$(dialog --stdout --clear --menu "NVIDIA GPU detected. Select driver" 0 0 0 \
+    video_driver=$(dialog --stdout --clear --menu "NVIDIA GPU detected. Select driver" \
+      "$DIALOG_MENU_HEIGHT" "$DIALOG_MENU_WIDTH" "$DIALOG_MENU_ROWS" \
       "nvidia-open" "Open kernel modules (Turing+, recommended)" \
       "nvidia" "Proprietary (pre-Turing GPUs)" \
       "none" "Skip (use nouveau/mesa)") || exit 1
@@ -775,7 +824,6 @@ else
   fi
   install -m 0644 "$mirrorlist_tmp" /etc/pacman.d/mirrorlist
   rm -f "$mirrorlist_tmp"
-  pacman -Sy --needed --noconfirm archlinux-keyring
 fi
 
 cpu_vendor=""

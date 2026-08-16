@@ -41,6 +41,11 @@ From the root shell in the live environment:
 curl -fsSL https://git.io/vpvGR | bash
 ```
 
+At startup, the installer initializes and populates pacman's Arch Linux keyring,
+then installs or updates `archlinux-keyring` before installing `dialog` or any
+other installer dependency. It stops with an error if the trusted keyring cannot
+be prepared; package signature verification remains enabled.
+
 The installer asks for:
 
 1. Install mode
