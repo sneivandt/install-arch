@@ -1078,7 +1078,7 @@ test_target_failure_reports_operation_and_output() {
     CURRENT_OPERATION="none"
     TEST_MODE=true
     RESUME=false
-    # shellcheck disable=SC2329 # Invoked indirectly by run_required_step.
+    # shellcheck disable=SC2317,SC2329 # Invoked indirectly by run_required_step.
     mocked_target_failure() {
       echo "mock target stdout"
       echo "mock target stderr" >&2
@@ -1114,7 +1114,7 @@ test_missing_alsa_control_is_nonfatal() {
   output="$({
     DEBUG_LOG_PATH="$debug_log_path"
     CURRENT_STAGE="target_system_configuration"
-    # shellcheck disable=SC2329 # Invoked indirectly by run_optional_step.
+    # shellcheck disable=SC2317,SC2329 # Invoked indirectly by run_optional_step.
     mocked_amixer_failure() {
       echo "amixer: Unable to find simple control 'Master'" >&2
       return 1
