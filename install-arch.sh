@@ -649,6 +649,10 @@ as_user() {
   in_target runuser -u "$user" -- env HOME="/home/$user" USER="$user" LOGNAME="$user" "$@"
 }
 
+as_user_dotfiles() {
+  as_user env DOTFILES_PROVISIONING=arch-chroot "$@"
+}
+
 target_group_record() {
   local group_name="$1"
 
@@ -813,6 +817,7 @@ ensure_primary_user() {
 prepare_dotfiles_checkout() {
   local repository_url="$1"
   local checkout_dir="$2"
+  local checkout_status
   local existing_remote
 
   if [ "$DRY_RUN" = "true" ]; then
@@ -834,7 +839,16 @@ prepare_dotfiles_checkout() {
       echo "Error: Existing dotfiles checkout '$checkout_dir' uses unexpected origin '$existing_remote'." >&2
       return 1
     fi
-    echo "Reusing existing dotfiles checkout at $checkout_dir"
+    if ! checkout_status="$(as_user git -C "$checkout_dir" status --porcelain)"; then
+      echo "Error: Could not inspect existing dotfiles checkout '$checkout_dir'." >&2
+      return 1
+    fi
+    if [ -n "$checkout_status" ]; then
+      echo "Error: Existing dotfiles checkout '$checkout_dir' has local changes; refusing to update or overwrite them." >&2
+      return 1
+    fi
+    echo "Updating existing dotfiles checkout at $checkout_dir"
+    as_user git -C "$checkout_dir" pull --ff-only
     return
   fi
 
@@ -1750,9 +1764,9 @@ esac
 echo "Preparing dotfiles bootstrap directory for $user"
 prepare_dotfiles_checkout "$dotfiles_repo" "$dotfiles_dir"
 echo "Validating dotfiles profile '$dotfiles_profile' for $user"
-as_user "$dotfiles_dir/dotfiles.sh" test -p "$dotfiles_profile"
+as_user_dotfiles "$dotfiles_dir/dotfiles.sh" test -p "$dotfiles_profile"
 echo "Applying dotfiles profile '$dotfiles_profile' for $user"
-as_user "$dotfiles_dir/dotfiles.sh" install -p "$dotfiles_profile" -v
+as_user_dotfiles "$dotfiles_dir/dotfiles.sh" install -p "$dotfiles_profile" -v
 
 if [ "$DRY_RUN" = "true" ]; then
   dry_run_msg "Would remove /mnt/etc/sudoers.d/00-installer-wheel-nopasswd"

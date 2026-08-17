@@ -222,6 +222,8 @@ test_dotfiles_build_prerequisites() {
   assert_occurs_before "$output" "arch-chroot /mnt cargo --version" \
     "/home/testuser/src/dotfiles/dotfiles.sh test -p base" \
     "Target Cargo validation precedes the dotfiles bootstrap"
+  assert_contains "$output" "DOTFILES_PROVISIONING=arch-chroot" \
+    "Installer identifies the chroot provisioning environment for dotfiles"
 }
 
 # Test 13: Validate the installer's GUI packages
@@ -977,7 +979,7 @@ test_existing_user_is_reconciled() {
     "Existing user state is verified after reconciliation"
 }
 
-test_existing_dotfiles_checkout_is_reused() {
+test_existing_dotfiles_checkout_is_updated_safely() {
   local output
 
   output="$({
@@ -994,6 +996,11 @@ test_existing_dotfiles_checkout_is_reused() {
         "git -C /home/testuser/src/dotfiles remote get-url origin")
           printf 'https://github.com/sneivandt/dotfiles.git\n'
           ;;
+        "git -C /home/testuser/src/dotfiles status --porcelain")
+          ;;
+        "git -C /home/testuser/src/dotfiles pull --ff-only")
+          printf 'Already up to date.\n'
+          ;;
         *)
           printf 'unexpected as_user command: %s\n' "$*" >&2
           return 2
@@ -1005,10 +1012,53 @@ test_existing_dotfiles_checkout_is_reused() {
       "/home/testuser/src/dotfiles"
   } 2>&1)"
 
-  assert_contains "$output" "Reusing existing dotfiles checkout" \
-    "Resume reuses a matching existing dotfiles checkout"
+  assert_contains "$output" "Updating existing dotfiles checkout" \
+    "Resume fast-forwards a clean matching dotfiles checkout"
+  assert_contains "$output" "Already up to date." \
+    "Resume exposes checkout update output"
   assert_not_contains "$output" "unexpected as_user command" \
     "Resume does not clone over an existing dotfiles checkout"
+}
+
+test_existing_dirty_dotfiles_checkout_is_preserved() {
+  local exit_code
+  local output
+
+  output="$({
+    DRY_RUN=false
+    user="testuser"
+    in_target() {
+      [ "$1" = "test" ] && [ "$2" = "-e" ]
+    }
+    as_user() {
+      case "$*" in
+        "git -C /home/testuser/src/dotfiles rev-parse --is-inside-work-tree")
+          printf 'true\n'
+          ;;
+        "git -C /home/testuser/src/dotfiles remote get-url origin")
+          printf 'https://github.com/sneivandt/dotfiles.git\n'
+          ;;
+        "git -C /home/testuser/src/dotfiles status --porcelain")
+          printf ' M conf/packages.toml\n'
+          ;;
+        *)
+          printf 'unexpected as_user command: %s\n' "$*" >&2
+          return 2
+          ;;
+      esac
+    }
+    prepare_dotfiles_checkout \
+      "https://github.com/sneivandt/dotfiles.git" \
+      "/home/testuser/src/dotfiles"
+  } 2>&1)"
+  exit_code=$?
+
+  assert_equals "1" "$exit_code" \
+    "Resume refuses to overwrite a modified dotfiles checkout"
+  assert_contains "$output" "has local changes; refusing to update or overwrite them" \
+    "Resume explains why a modified checkout was preserved"
+  assert_not_contains "$output" "pull --ff-only" \
+    "Resume does not update a modified checkout"
 }
 
 test_target_failure_reports_operation_and_output() {
@@ -1204,7 +1254,8 @@ test_dotfiles_bootstrap_minimal
 test_dotfiles_bootstrap_desktop
 test_fresh_user_creation
 test_existing_user_is_reconciled
-test_existing_dotfiles_checkout_is_reused
+test_existing_dotfiles_checkout_is_updated_safely
+test_existing_dirty_dotfiles_checkout_is_preserved
 test_target_failure_reports_operation_and_output
 test_missing_alsa_control_is_nonfatal
 test_resume_skips_destructive_and_pacstrap_stages

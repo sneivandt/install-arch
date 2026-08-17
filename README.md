@@ -155,11 +155,18 @@ On `--resume`, an existing intended user is verified and reconciled instead of
 being recreated. The installer restores the expected home path, primary group,
 `wheel`/`docker` memberships, zsh login shell, password, and top-level home
 ownership without moving or overwriting existing home contents. A matching
-dotfiles checkout is reused; an unrelated directory or checkout is left intact
-and reported as an error. Bootstrap prerequisites are also converged again in
-the target, so a partial install made by an older installer replaces an
-unconfigured `rustup` proxy with Arch's complete `rust` toolchain before
-dotfiles runs.
+clean dotfiles checkout is fast-forwarded before reuse; an unrelated or locally
+modified checkout is left intact and reported as an error. Bootstrap
+prerequisites are also converged again in the target, so a partial install made
+by an older installer replaces an unconfigured `rustup` proxy with Arch's
+complete `rust` toolchain before dotfiles runs.
+
+Dotfiles is explicitly told that it is running under `arch-chroot`. User
+systemd units are enabled on disk without contacting a nonexistent user bus,
+and desktop VS Code extensions are scheduled through a user service for the
+first graphical login. The service keeps retrying verified Marketplace
+installation when it fails and removes its durable marker only after the
+extension set converges.
 
 ## Opinionated defaults
 
