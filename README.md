@@ -99,13 +99,21 @@ not match this installer's layout, resume stops without formatting anything.
 | Mode | Description | Dotfiles profile |
 | --- | --- | --- |
 | `1` Minimal | CLI system with development tools, Docker, zsh, and modern terminal utilities | `base` |
-| `2` Workstation | Minimal mode plus Hyprland, Wayland utilities, Chromium, PipeWire media support with PulseAudio as the active server, fonts, and optional NVIDIA drivers | `desktop` |
+| `2` Workstation | Minimal mode plus Hyprland, Quickshell, Wayland utilities, Chromium, PipeWire audio with WirePlumber, fonts, and optional NVIDIA drivers | `desktop` |
 | `3` VirtualBox | Workstation mode plus VirtualBox guest utilities and `vboxservice.service` | `desktop` |
 
 All modes install Arch's current `linux` kernel and matching headers. This
 package tracks the latest stable kernel in the Arch repositories; no LTS kernel
 is installed. The installer also adds Intel or AMD microcode when it can
 identify the CPU vendor.
+
+Desktop audio follows dotfiles: `pipewire`, `pipewire-alsa`, `pipewire-pulse`,
+and `wireplumber`. The standalone `pulseaudio` server is not installed.
+
+The NVIDIA menu offers `nvidia-open` for Turing and newer GPUs, or skipping
+NVIDIA installation. The old `nvidia` package is no longer a pre-Turing driver
+option. Older GPUs require a suitable legacy driver installed separately;
+choose skip rather than installing open modules on unsupported hardware.
 
 Package definitions are maintained in the `BASE_PACKAGES`, `GUI_PACKAGES`, and
 `VBOX_PACKAGES` arrays in [`install-arch.sh`](install-arch.sh).
@@ -140,16 +148,30 @@ The installer configures:
 - Weekly reflector and filesystem trim timers
 - Pacman package-cache cleanup
 - Baseline kernel and network hardening
-- Arch-managed AUR build prerequisites (`base-devel`, `git`, `rust`, and
-  `sudo`), with Cargo and rustc verified inside the target
+- Arch-managed AUR build prerequisites (`base-devel`, `git`, `rustup`, and
+  `sudo`), with a stable Rust toolchain initialized and verified as the target user
 - A primary user in the `wheel` and `docker` groups
 - zsh as the user's login shell
 - A locked root account
 
+The installer establishes password-required `wheel` sudo before locking root,
+converges baseline packages, then completes initramfs and GRUB configuration
+before initializing the user's toolchain or running dotfiles.
+A later application-provisioning failure still stops the installer,
+but does not postpone boot configuration or remove normal sudo access.
+
 It clones [sneivandt/dotfiles](https://github.com/sneivandt/dotfiles) to
-`/home/<user>/src/dotfiles`, validates the profile for the selected mode, and
-then applies it as the new user. Passwordless `wheel` sudo is enabled only
-during this bootstrap; normal password-required sudo is restored afterward.
+`/home/<user>/src/dotfiles`, runs `dotfiles.sh check`, saves the selected profile
+in the checkout's local Git configuration, and runs `dotfiles.sh update` as the
+new user. Both commands receive an explicit profile and root path and run
+non-interactively. Update uses `--no-repo-update` to apply the checked checkout
+and `--fail-on-skip` to report incomplete applicable work as a failure.
+The wrapper downloads its verified release binary when needed; it does not
+require compiling the dotfiles CLI from source.
+
+Passwordless `wheel` sudo is enabled only during dotfiles bootstrap through a
+temporary rule that sorts after the permanent rule. Removing it on success or
+failure leaves normal password-required sudo in place.
 
 On `--resume`, an existing intended user is verified and reconciled instead of
 being recreated. The installer restores the expected home path, primary group,
@@ -157,9 +179,17 @@ being recreated. The installer restores the expected home path, primary group,
 ownership without moving or overwriting existing home contents. A matching
 clean dotfiles checkout is fast-forwarded before reuse; an unrelated or locally
 modified checkout is left intact and reported as an error. Bootstrap
-prerequisites are also converged again in the target, so a partial install made
-by an older installer replaces an unconfigured `rustup` proxy with Arch's
-complete `rust` toolchain before dotfiles runs.
+prerequisites are also converged again in the target. Older partial installs
+remove the conflicting `rust` package and, in desktop modes, `pulseaudio`
+before installing replacements. Removal retains pacman's dependency checks;
+if another package prevents it, the installer stops with an error rather than
+forcing removal or removing unrelated dependencies. Resolve that conflict
+before resuming.
+
+Rustup is initialized with `rustup default stable` under the target user's home,
+with explicit `CARGO_HOME` and `RUSTUP_HOME`. Cargo and rustc must work as that
+user before any AUR build or dotfiles command runs. Resume repeats this setup,
+so an installed but unconfigured rustup proxy is not mistaken for a toolchain.
 
 Dotfiles is explicitly told that it is running under `arch-chroot`. User
 systemd units are enabled on disk without contacting a nonexistent user bus,
@@ -204,7 +234,13 @@ TEST_MODE_LUKS_PASSWORD="lukspass123" \
 ```
 
 For workstation and VirtualBox dry runs, set `TEST_MODE_VIDEO_DRIVER` to
-`nvidia-open`, `nvidia`, or an empty value.
+`nvidia-open` or an empty value.
+
+Dry run is not a zero-write sandbox: it still writes
+`/tmp/install-arch-debug.log`. Interactive `--dry-run` also prepares the live
+ISO's package keyring and installs `dialog`; use `--test-mode --dry-run` for
+routine development checks. Installer dry runs print dotfiles commands without
+executing the dotfiles wrapper.
 
 Destructive test mode is reserved for disposable loop devices. It requires
 every `TEST_MODE_*` value plus an explicit opt-in:
@@ -227,10 +263,22 @@ devices in destructive test mode.
 Run the local checks with:
 
 ```bash
-bash -n install-arch.sh test/*.sh
+for script in install-arch.sh test/*.sh; do bash -n "$script" || exit; done
 shellcheck install-arch.sh test/*.sh
 ./test/unit_tests.sh
 ```
+
+Check the production bootstrap arguments against the latest released dotfiles CLI:
+
+```bash
+bash test/dotfiles_contract_test.sh
+```
+
+This network-dependent check requires an authenticated `gh` CLI. It downloads
+the release into a temporary directory, verifies its checksum and build
+attestation, and parses the actual `check`/`update` arguments using CLI help.
+It does not run dotfiles checks, apply configuration, or provision the host.
+CI runs it separately so removed upstream commands or flags are detected.
 
 The loop-device integration test requires root:
 

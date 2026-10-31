@@ -27,7 +27,7 @@
 <!-- Describe the tests you ran to verify your changes -->
 
 ### Checklist
-- [ ] Scripts pass syntax checks (`bash -n install-arch.sh test/*.sh`)
+- [ ] Scripts pass syntax checks (`for script in install-arch.sh test/*.sh; do bash -n "$script" || exit; done`)
 - [ ] ShellCheck passes (`shellcheck install-arch.sh test/*.sh`)
 - [ ] Unit tests pass (`./test/unit_tests.sh`)
 - [ ] Integration tests pass (`sudo ./test/integration_test.sh`)

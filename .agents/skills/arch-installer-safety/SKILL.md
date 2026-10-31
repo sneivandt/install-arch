@@ -1,55 +1,63 @@
 ---
 name: arch-installer-safety
-description: Use when modifying install-arch.sh safety-sensitive behavior, including disk partitioning, encryption, LVM, chroot operations, bootloader/initramfs config, sudo, users, services, or cleanup.
+description: Review or change install-arch.sh disk, encryption, LVM, resume, boot/initramfs, chroot, sudo, user, service, or cleanup behavior. Use for changes that can destroy data, affect privileges, or leave the target unbootable.
 ---
 
 # Arch Installer Safety
 
-Use this skill for changes that could affect data loss, bootability, system
-security, or install reliability.
+Trace the affected stage from input validation through mutation and cleanup.
+Check fresh install, `--resume`, failure, and dry-run paths; use the testing
+skill for non-destructive verification.
 
-## Safety invariants
+## Execution and diagnostics
 
-- Keep `set -o errexit`, `set -o nounset`, and `set -o pipefail`.
-- Preserve the central helpers in `install-arch.sh` (`run_cmd`, `in_target`,
-  `as_user`, `write_file`, `append_file`, `enable_services`) instead of
-  duplicating dry-run or chroot logic.
-- Quote variables, arrays, paths, command substitutions, and heredoc inputs
-  correctly.
-- Validate all user-controlled values before use: mode, hostname, username,
-  target device, LUKS password, selected driver, and paths.
-- Fail closed with clear errors. Do not add broad catches, silent fallbacks, or
-  early returns that hide invalid state.
+- Preserve `errexit`, `errtrace`, `nounset`, `pipefail`, and the error, signal,
+  and exit traps. Bash suppresses `errexit` inside functions used as conditions:
+  check failures explicitly when adding conditional wrappers.
+- Reuse `run_cmd`, `in_target`, `as_user`, `write_file`, `append_file`, and
+  `enable_services` rather than bypassing dry-run or chroot handling.
+- Use `run_required_step` for required configuration work. Reserve
+  `run_optional_step` for genuinely nonessential work that may safely fail.
+- Preserve normal command stdout/stderr, stage markers, and diagnostic context.
+  Never log secret values; quoting alone does not make a secret safe to log.
 
 ## Destructive operations
 
-- Confirm the target is root-run, UEFI-booted, online, a block device, large
-  enough, unmounted, and not already using installer names such as `cryptlvm` or
-  `volgroup0`.
-- Never remove broad paths or use broad destructive commands without explicit
-  target validation.
+- Preserve root, UEFI, network, tool, mount, device-type, and size checks before
+  destructive work. Validate selections and retain explicit full-disk
+  confirmation before wiping.
+- Check that `cryptlvm` and `volgroup0` are unclaimed before acquisition.
 - Wait for partition nodes after changing partition tables.
-- Keep cleanup idempotent and ownership-aware: unmount `/mnt`, swapoff the
-  installer swap LV, deactivate `volgroup0`, and close `cryptlvm` only when the
-  current run successfully acquired each resource.
+- Keep cleanup ownership flags accurate, including partial acquisition failures.
+  A matching resource name is not evidence of ownership. Release owned swap,
+  mounts, VG, and LUKS mapping in dependency order.
+- Preserve unrelated resources and target files. Never use global swap,
+  unmount, or LVM cleanup as a shortcut.
 
 ## Storage, encryption, and boot
 
 - Use LUKS2 for encrypted root: `cryptsetup luksFormat --type luks2`.
-- Do not log passwords or pass plaintext passwords as command arguments. Hash
-  user passwords through stdin, validate the hash, and unset plaintext
-  variables immediately.
+- Pass encryption keys and password-hashing input through stdin, not command
+  arguments. Validate hashes and unset plaintext variables after use.
 - Preserve device suffix handling for NVMe, eMMC, and loop devices.
-- Preserve GRUB encrypted-root configuration through `/etc/default/grub` using
-  the LUKS partition UUID so both `linux` and `linux-lts` entries are covered.
-- Preserve mkinitcpio hooks needed for encrypted LVM boot.
+- Keep the LUKS UUID in `/etc/default/grub` and encryption/LVM initramfs hooks
+  aligned with the installed kernel packages. The installer currently installs
+  `linux`, not an LTS kernel.
+- Treat `--resume` as reopening and validating an existing installation, not a
+  fresh install. Never repartition, format, or run `pacstrap` on that path.
+  Review partition, VG/LV, and target-system identity checks before reuse.
+- Preserve atomic `fstab` replacement and resume-safe symlinks. Check failures
+  before declaring the target bootable.
 
 ## Chroot, sudo, and services
 
 - Use `in_target` for `arch-chroot /mnt ...` commands.
-- Use `as_user` for target-user commands so `HOME`, `USER`, and `LOGNAME` are
-  correct.
-- Prefer sudoers drop-ins validated with `visudo -cf /etc/sudoers`; avoid
-  editing `/etc/sudoers` directly.
-- Enable services through `enable_services` unless a command needs special
-  sequencing.
+- Use `as_user` for target-user commands and `as_user_dotfiles` for dotfiles.
+  Do not fake a live session bus or start user services inside the chroot.
+- Reconcile only the intended regular user on resume. Preserve existing home
+  contents and reject unsafe account or path identities.
+- Validate sudoers drop-ins with `visudo -cf /etc/sudoers`. Remove temporary
+  passwordless access on both success and failure; review recovery access when
+  changing root locking or sudo setup order.
+- Enable system services through `enable_services`; do not start host services
+  while configuring the target.

@@ -29,6 +29,7 @@ INSTALL_CREATED_VG=false
 INSTALL_ENABLED_SWAP=false
 INSTALL_MOUNTED_ROOT=false
 TEMP_SUDOERS_CREATED=false
+TARGET_PACKAGES_READY=false
 DIALOG_TTY_FD=""
 DEBUG_LOG_PATH="/tmp/install-arch-debug.log"
 CURRENT_STAGE="runtime_setup"
@@ -130,7 +131,7 @@ error_handler() {
   printf '%s\n' "$message" >&2
   printf 'Failing command: %s\n' "$failed_command" >&2
   printf 'Diagnostic log: %s\n' "$DEBUG_LOG_PATH" >&2
-  if [ "$CURRENT_STAGE" = "target_system_configuration" ] && [ "$RESUME" = "false" ]; then
+  if [ "$TARGET_PACKAGES_READY" = "true" ] && [ "$RESUME" = "false" ]; then
     printf 'The installed packages were preserved; rerun with --resume to retry configuration without repartitioning or pacstrap.\n' >&2
   fi
   exit "$exit_code"
@@ -157,7 +158,7 @@ cleanup() {
   if [ "$TEMP_SUDOERS_CREATED" = "true" ] &&
     [ "$INSTALL_MOUNTED_ROOT" = "true" ] &&
     mountpoint -q /mnt 2>/dev/null; then
-    rm -f /mnt/etc/sudoers.d/00-installer-wheel-nopasswd
+    rm -f /mnt/etc/sudoers.d/99-installer-wheel-nopasswd
   fi
   if [ "$INSTALL_ENABLED_SWAP" = "true" ]; then
     swapoff /dev/mapper/volgroup0-swap 2>/dev/null || true
@@ -390,8 +391,7 @@ validate_package_name() {
 validate_video_driver() {
   local selected_driver="$1"
   [ -z "$selected_driver" ] ||
-    [ "$selected_driver" = "nvidia-open" ] ||
-    [ "$selected_driver" = "nvidia" ]
+    [ "$selected_driver" = "nvidia-open" ]
 }
 
 get_device_prefix() {
@@ -549,7 +549,7 @@ BASE_PACKAGES=(
   ripgrep
   sed
   shellcheck
-  rust
+  rustup
   sudo
   tmux
   ufw
@@ -580,12 +580,14 @@ GUI_PACKAGES=(
   papirus-icon-theme
   playerctl
   pipewire
-  pulseaudio
+  pipewire-alsa
+  pipewire-pulse
   qt5-wayland
   qt6-wayland
+  quickshell
   slurp
   uwsm
-  waybar
+  wireplumber
   wl-clipboard
   fuzzel
   xorg-xwayland
@@ -646,11 +648,74 @@ in_target() {
 }
 
 as_user() {
-  in_target runuser -u "$user" -- env HOME="/home/$user" USER="$user" LOGNAME="$user" "$@"
+  in_target runuser -u "$user" -- env HOME="/home/$user" USER="$user" LOGNAME="$user" \
+    CARGO_HOME="/home/$user/.cargo" RUSTUP_HOME="/home/$user/.rustup" "$@"
 }
 
 as_user_dotfiles() {
   as_user env DOTFILES_PROVISIONING=arch-chroot "$@"
+}
+
+prepare_dotfiles_packages() {
+  local installed_packages
+  local package
+  local obsolete_packages=()
+  local bootstrap_packages=(base-devel git rustup sudo)
+
+  case "$mode" in
+    2|3) bootstrap_packages+=( "${GUI_PACKAGES[@]}" ) ;;
+  esac
+
+  if [ "$DRY_RUN" = "true" ]; then
+    dry_run_msg "Would remove the conflicting rust package if installed"
+    if [ "$mode" != "1" ]; then
+      dry_run_msg "Would remove the conflicting pulseaudio package if installed"
+    fi
+  else
+    if ! installed_packages="$(in_target pacman -Qq)"; then
+      echo "Error: Unable to inspect target packages before dotfiles bootstrap." >&2
+      return 1
+    fi
+    while IFS= read -r package; do
+      case "$package" in
+        rust) obsolete_packages+=( "$package" ) ;;
+        pulseaudio)
+          if [ "$mode" != "1" ]; then
+            obsolete_packages+=( "$package" )
+          fi
+          ;;
+      esac
+    done <<< "$installed_packages"
+
+    if [ "${#obsolete_packages[@]}" -gt 0 ]; then
+      # Keep pacman's dependency checks: never force removal or cascade into
+      # unrelated packages when migrating an older partial installation.
+      if ! in_target pacman -R --noconfirm "${obsolete_packages[@]}"; then
+        echo "Error: Could not remove conflicting bootstrap packages; resolve their dependencies before resuming." >&2
+        return 1
+      fi
+    fi
+  fi
+  in_target pacman -Syu --needed --noconfirm "${bootstrap_packages[@]}"
+}
+
+prepare_user_toolchain() {
+  as_user rustup default stable || return
+  as_user cargo --version || return
+  as_user rustc --version
+}
+
+provision_dotfiles() {
+  local checkout_dir="$1"
+  local profile="$2"
+
+  echo "Validating dotfiles profile '$profile' for $user"
+  as_user_dotfiles "$checkout_dir/dotfiles.sh" check -p "$profile" \
+    --root "$checkout_dir" --non-interactive || return
+  as_user git -C "$checkout_dir" config --local dotfiles.profile "$profile" || return
+  echo "Applying dotfiles profile '$profile' for $user"
+  as_user_dotfiles "$checkout_dir/dotfiles.sh" update -p "$profile" \
+    --root "$checkout_dir" --non-interactive --no-repo-update --fail-on-skip -v
 }
 
 target_group_record() {
@@ -1340,18 +1405,17 @@ if [ "$mode" -eq 2 ] || [ "$mode" -eq 3 ]; then
     video_driver="${TEST_MODE_VIDEO_DRIVER:-}"
   elif command -v lspci >/dev/null 2>&1 && lspci | grep -e VGA -e 3D | grep -q NVIDIA; then
     dialog_capture video_driver "nvidia_driver" "menu" \
-      "$DIALOG_MENU_HEIGHT" "$DIALOG_MENU_WIDTH" "$DIALOG_MENU_ROWS" "3" \
+      "$DIALOG_MENU_HEIGHT" "$DIALOG_MENU_WIDTH" "$DIALOG_MENU_ROWS" "2" \
       --clear --menu "NVIDIA GPU detected. Select driver" \
       "$DIALOG_MENU_HEIGHT" "$DIALOG_MENU_WIDTH" "$DIALOG_MENU_ROWS" \
       "nvidia-open" "Open kernel modules (Turing+, recommended)" \
-      "nvidia" "Proprietary (pre-Turing GPUs)" \
-      "none" "Skip (use nouveau/mesa)" || exit 1
+      "none" "Skip (nouveau/mesa; older GPUs need legacy drivers)" || exit 1
     if [ "$video_driver" = "none" ]; then
       video_driver=""
     fi
   fi
   if ! validate_video_driver "$video_driver"; then
-    echo "Error: Invalid video driver '$video_driver'. Expected nvidia-open, nvidia, or an empty value."
+    echo "Error: Invalid video driver '$video_driver'. Expected nvidia-open (Turing+) or an empty value. The old nvidia package is no longer supported; older GPUs need a separately installed legacy driver."
     exit 1
   fi
 fi
@@ -1517,6 +1581,7 @@ esac
 debug_checkpoint "package_installation"
 run_cmd pacstrap -K /mnt "${packages[@]}"
 fi
+TARGET_PACKAGES_READY=true
 
 # Target system configuration
 # Write base OS configuration and enable services before user bootstrap.
@@ -1718,62 +1783,11 @@ run_required_step "write /mnt/etc/xdg/reflector/reflector.conf" \
 --sort rate
 EOF
 
-# Dotfiles bootstrap prerequisites
-# Converge and validate AUR build tools inside the target on both fresh and
-# resumed installs. Requesting rust explicitly also replaces the conflicting
-# rustup proxy package left by older failed installer runs.
-
-debug_checkpoint "dotfiles_bootstrap_prerequisites"
-run_required_step \
-  "arch-chroot /mnt pacman -Syu --needed --noconfirm base-devel git rust sudo" \
-  in_target pacman -Syu --needed --noconfirm base-devel git rust sudo
-run_required_step "arch-chroot /mnt cargo --version" in_target cargo --version
-run_required_step "arch-chroot /mnt rustc --version" in_target rustc --version
-
-# User and dotfiles
-# Create the primary user, temporarily allow sudo for dotfiles, then require sudo passwords.
-
-debug_checkpoint "user_and_dotfiles_configuration"
+# Establish recovery access and boot before application provisioning can fail.
+debug_checkpoint "user_configuration"
 ensure_primary_user "$user" "$password_hash"
 unset password_hash
 
-if [ "$DRY_RUN" = "false" ]; then
-  TEMP_SUDOERS_CREATED=true
-fi
-write_file /mnt/etc/sudoers.d/00-installer-wheel-nopasswd <<'EOF'
-%wheel ALL=(ALL:ALL) NOPASSWD: ALL
-EOF
-if [ "$DRY_RUN" = "false" ]; then
-  chmod 0440 /mnt/etc/sudoers.d/00-installer-wheel-nopasswd
-  in_target visudo -cf /etc/sudoers
-fi
-
-in_target passwd -l root
-in_target usermod -s /sbin/nologin root
-
-dotfiles_repo="https://github.com/sneivandt/dotfiles.git"
-dotfiles_dir="/home/$user/src/dotfiles"
-case "$mode" in
-  1)
-    dotfiles_profile="base"
-    ;;
-  2|3)
-    dotfiles_profile="desktop"
-    ;;
-esac
-echo "Preparing dotfiles bootstrap directory for $user"
-prepare_dotfiles_checkout "$dotfiles_repo" "$dotfiles_dir"
-echo "Validating dotfiles profile '$dotfiles_profile' for $user"
-as_user_dotfiles "$dotfiles_dir/dotfiles.sh" test -p "$dotfiles_profile"
-echo "Applying dotfiles profile '$dotfiles_profile' for $user"
-as_user_dotfiles "$dotfiles_dir/dotfiles.sh" install -p "$dotfiles_profile" -v
-
-if [ "$DRY_RUN" = "true" ]; then
-  dry_run_msg "Would remove /mnt/etc/sudoers.d/00-installer-wheel-nopasswd"
-else
-  rm -f /mnt/etc/sudoers.d/00-installer-wheel-nopasswd
-  TEMP_SUDOERS_CREATED=false
-fi
 write_file /mnt/etc/sudoers.d/10-wheel <<'EOF'
 %wheel ALL=(ALL:ALL) ALL
 EOF
@@ -1781,6 +1795,14 @@ if [ "$DRY_RUN" = "false" ]; then
   chmod 0440 /mnt/etc/sudoers.d/10-wheel
   in_target visudo -cf /etc/sudoers
 fi
+
+in_target passwd -l root
+in_target usermod -s /sbin/nologin root
+
+# Finish the baseline package transaction before configuring boot, particularly
+# when resuming a target whose kernel or GRUB packages need updating.
+debug_checkpoint "dotfiles_bootstrap_packages"
+run_required_step "prepare target dotfiles packages" prepare_dotfiles_packages
 
 # Boot configuration
 # Build initramfs images with encryption/LVM hooks and install GRUB for UEFI boot.
@@ -1817,6 +1839,43 @@ else
 fi
 in_target grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB --recheck "$device"
 in_target grub-mkconfig -o /boot/grub/grub.cfg
+
+# Dotfiles bootstrap
+# Initialize rustup under the account that will build AUR packages.
+debug_checkpoint "dotfiles_bootstrap_prerequisites"
+run_required_step "initialize and verify the user's Rust toolchain" prepare_user_toolchain
+
+debug_checkpoint "dotfiles_configuration"
+if [ "$DRY_RUN" = "false" ]; then
+  TEMP_SUDOERS_CREATED=true
+fi
+# This temporary rule must sort after 10-wheel to override its password policy.
+write_file /mnt/etc/sudoers.d/99-installer-wheel-nopasswd <<'EOF'
+%wheel ALL=(ALL:ALL) NOPASSWD: ALL
+EOF
+if [ "$DRY_RUN" = "false" ]; then
+  chmod 0440 /mnt/etc/sudoers.d/99-installer-wheel-nopasswd
+  in_target visudo -cf /etc/sudoers
+fi
+
+dotfiles_repo="https://github.com/sneivandt/dotfiles.git"
+dotfiles_dir="/home/$user/src/dotfiles"
+case "$mode" in
+  1) dotfiles_profile="base" ;;
+  2|3) dotfiles_profile="desktop" ;;
+esac
+echo "Preparing dotfiles bootstrap directory for $user"
+prepare_dotfiles_checkout "$dotfiles_repo" "$dotfiles_dir"
+run_required_step "validate and apply dotfiles profile $dotfiles_profile" \
+  provision_dotfiles "$dotfiles_dir" "$dotfiles_profile"
+
+if [ "$DRY_RUN" = "true" ]; then
+  dry_run_msg "Would remove /mnt/etc/sudoers.d/99-installer-wheel-nopasswd"
+else
+  rm -f /mnt/etc/sudoers.d/99-installer-wheel-nopasswd
+  TEMP_SUDOERS_CREATED=false
+  in_target visudo -cf /etc/sudoers
+fi
 
 # Cleanup
 # Release resources explicitly; the EXIT trap handles failures before this point.

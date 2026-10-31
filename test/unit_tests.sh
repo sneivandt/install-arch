@@ -207,23 +207,128 @@ test_dotfiles_build_prerequisites() {
 
   assert_equals "1" "$base_devel_count" "Base packages include base-devel for AUR builds"
   assert_equals "1" "$git_count" "Base packages include git for AUR sources"
-  assert_equals "1" "$rust_count" "Base packages include the Arch Rust toolchain"
-  assert_equals "0" "$rustup_count" "Base packages exclude an unconfigured rustup proxy"
+  assert_equals "0" "$rust_count" "Base packages exclude the conflicting rust package"
+  assert_equals "1" "$rustup_count" "Base packages follow dotfiles' rustup policy"
   assert_equals "1" "$sudo_count" "Base packages include sudo for makepkg installation"
 
   output=$(run_script_dry_run "1")
   assert_contains "$output" \
-    "arch-chroot /mnt pacman -Syu --needed --noconfirm base-devel git rust sudo" \
+    "arch-chroot /mnt pacman -Syu --needed --noconfirm base-devel git rustup sudo" \
     "Installer converges AUR build prerequisites inside the target"
-  assert_contains "$output" "arch-chroot /mnt cargo --version" \
-    "Installer validates Cargo inside the target"
-  assert_contains "$output" "arch-chroot /mnt rustc --version" \
-    "Installer validates rustc inside the target"
-  assert_occurs_before "$output" "arch-chroot /mnt cargo --version" \
-    "/home/testuser/src/dotfiles/dotfiles.sh test -p base" \
+  assert_contains "$output" "CARGO_HOME=/home/testuser/.cargo RUSTUP_HOME=/home/testuser/.rustup rustup default stable" \
+    "Installer initializes stable Rust in the target user's home"
+  assert_occurs_before "$output" "rustup default stable" "cargo --version" \
+    "Installer initializes rustup before validating Cargo"
+  assert_contains "$output" "RUSTUP_HOME=/home/testuser/.rustup cargo --version" \
+    "Installer validates Cargo as the target user"
+  assert_contains "$output" "RUSTUP_HOME=/home/testuser/.rustup rustc --version" \
+    "Installer validates rustc as the target user"
+  assert_occurs_before "$output" "cargo --version" \
+    "/home/testuser/src/dotfiles/dotfiles.sh check -p base" \
     "Target Cargo validation precedes the dotfiles bootstrap"
   assert_contains "$output" "DOTFILES_PROVISIONING=arch-chroot" \
     "Installer identifies the chroot provisioning environment for dotfiles"
+}
+
+run_bootstrap_package_scenario() (
+  local scenario="$1"
+  DRY_RUN=false
+  mode="$2"
+  in_target() {
+    printf 'target: %s\n' "$*" >&2
+    case "$1:$2" in
+      pacman:-Qq)
+        if [ "$scenario" = "inventory-failure" ]; then
+          return 23
+        elif [ "$scenario" = "fresh" ]; then
+          printf 'base\nrustup\npipewire-pulse\n'
+        else
+          printf 'base\nrust\npulseaudio\nunrelated-package\n'
+        fi
+        ;;
+      pacman:-R)
+        [ "$scenario" != "removal-failure" ]
+        ;;
+      pacman:-Syu)
+        if [ "$scenario" = "install-failure" ]; then
+          return 25
+        fi
+        ;;
+      *)
+        echo "unexpected target command" >&2
+        return 2
+        ;;
+    esac
+  }
+  prepare_dotfiles_packages
+)
+
+test_bootstrap_package_migration() {
+  local output
+  local selected_mode
+  local scenario
+  local exit_code
+
+  output="$(run_bootstrap_package_scenario fresh 1 2>&1)"
+  assert_not_contains "$output" "pacman -R" "Fresh installs do not remove packages"
+  output="$(run_bootstrap_package_scenario existing 1 2>&1)"
+  assert_contains "$output" "target: pacman -R --noconfirm rust" \
+    "Minimal resume removes the conflicting rust package with dependency checks"
+  assert_not_contains "$output" "rust pulseaudio" \
+    "Minimal resume leaves audio packages alone"
+
+  for selected_mode in 2 3; do
+    output="$(run_bootstrap_package_scenario existing "$selected_mode" 2>&1)"
+    assert_contains "$output" "target: pacman -R --noconfirm rust pulseaudio" \
+      "Mode $selected_mode migrates both conflicting package providers"
+    assert_occurs_before "$output" "pacman -R" "pacman -Syu" \
+      "Mode $selected_mode removes conflicts before installing replacements"
+    assert_contains "$output" "pipewire-alsa pipewire-pulse" \
+      "Mode $selected_mode converges the current audio packages on resume"
+    assert_not_contains "$output" "unrelated-package" \
+      "Mode $selected_mode does not remove unrelated packages"
+    assert_not_contains "$output" "--nodeps" \
+      "Mode $selected_mode preserves dependency checks"
+  done
+
+  for scenario in inventory-failure removal-failure; do
+    output="$(run_bootstrap_package_scenario "$scenario" 2 2>&1)"
+    exit_code=$?
+    assert_equals "1" "$exit_code" "$scenario aborts bootstrap"
+    assert_not_contains "$output" "pacman -Syu" \
+      "$scenario does not proceed to replacement installation"
+    assert_contains "$output" "Error:" "$scenario reports the failure"
+  done
+  output="$(run_bootstrap_package_scenario install-failure 2 2>&1)"
+  exit_code=$?
+  assert_equals "25" "$exit_code" "Bootstrap preserves package installation failures"
+}
+
+test_user_toolchain_failure_stops_bootstrap() {
+  local output
+  local exit_code
+  local failed_command
+
+  for failed_command in rustup cargo rustc; do
+    output="$({
+      as_user() {
+        printf 'as_user: %s\n' "$*"
+        if [ "$1" = "$failed_command" ]; then
+          return 17
+        fi
+      }
+      prepare_user_toolchain
+    } 2>&1)"
+    exit_code=$?
+    assert_equals "17" "$exit_code" "$failed_command failure propagates from toolchain setup"
+    if [ "$failed_command" = "rustup" ]; then
+      assert_not_contains "$output" "cargo --version" \
+        "A failed rustup initialization is not treated as a usable toolchain"
+    elif [ "$failed_command" = "cargo" ]; then
+      assert_not_contains "$output" "rustc --version" \
+        "A failed Cargo validation stops subsequent toolchain steps"
+    fi
+  done
 }
 
 # Test 13: Validate the installer's GUI packages
@@ -243,8 +348,12 @@ test_kernel_and_audio_packages() {
   local linux_headers_count=0
   local lts_count=0
   local pipewire_count=0
-  local pulseaudio_count=0
+  local pipewire_alsa_count=0
+  local pipewire_pulse_count=0
+  local wireplumber_count=0
   local conflicting_audio_count=0
+  local quickshell_count=0
+  local waybar_count=0
   local pkg
 
   for pkg in "${BASE_PACKAGES[@]}"; do
@@ -266,12 +375,20 @@ test_kernel_and_audio_packages() {
       pipewire)
         ((pipewire_count++))
         ;;
-      pulseaudio)
-        ((pulseaudio_count++))
+      pipewire-alsa)
+        ((pipewire_alsa_count++))
         ;;
-      pipewire-pulse|wireplumber)
+      pipewire-pulse)
+        ((pipewire_pulse_count++))
+        ;;
+      wireplumber)
+        ((wireplumber_count++))
+        ;;
+      pulseaudio|pulseaudio-alsa)
         ((conflicting_audio_count++))
         ;;
+      quickshell) ((quickshell_count++)) ;;
+      waybar) ((waybar_count++)) ;;
     esac
   done
 
@@ -279,8 +396,12 @@ test_kernel_and_audio_packages() {
   assert_equals "1" "$linux_headers_count" "Base packages include matching kernel headers"
   assert_equals "0" "$lts_count" "Base packages exclude LTS kernels"
   assert_equals "1" "$pipewire_count" "GUI packages include PipeWire media support"
-  assert_equals "1" "$pulseaudio_count" "GUI packages include PulseAudio"
-  assert_equals "0" "$conflicting_audio_count" "GUI packages exclude PulseAudio replacements"
+  assert_equals "1" "$pipewire_alsa_count" "GUI packages include PipeWire ALSA compatibility"
+  assert_equals "1" "$pipewire_pulse_count" "GUI packages include PipeWire PulseAudio compatibility"
+  assert_equals "1" "$wireplumber_count" "GUI packages include the WirePlumber session manager"
+  assert_equals "0" "$conflicting_audio_count" "GUI packages exclude conflicting PulseAudio packages"
+  assert_equals "1" "$quickshell_count" "GUI packages include the current dotfiles desktop shell"
+  assert_equals "0" "$waybar_count" "GUI packages no longer install the obsolete Waybar setup"
 }
 
 test_vbox_packages() {
@@ -339,7 +460,7 @@ test_password_hashing_treats_options_as_data() {
 
 test_video_driver_validation() {
   assert_command_success "nvidia-open is an allowed video driver" validate_video_driver "nvidia-open"
-  assert_command_success "nvidia is an allowed video driver" validate_video_driver "nvidia"
+  assert_command_fails "Obsolete nvidia package is rejected" validate_video_driver "nvidia"
   assert_command_success "Empty video driver is allowed" validate_video_driver ""
   assert_command_fails "Pacstrap options are rejected as video drivers" validate_video_driver "--overwrite"
 }
@@ -670,7 +791,7 @@ test_cleanup_releases_owned_resources_in_order() {
   cleanup_log="$(mktemp)"
   if ! (
     DRY_RUN=false
-    TEMP_SUDOERS_CREATED=false
+    TEMP_SUDOERS_CREATED=true
     INSTALL_ENABLED_SWAP=true
     INSTALL_MOUNTED_ROOT=true
     INSTALL_CREATED_VG=true
@@ -681,6 +802,9 @@ test_cleanup_releases_owned_resources_in_order() {
     }
     mountpoint() {
       return 0
+    }
+    rm() {
+      printf 'rm %s\n' "$*" >> "$cleanup_log"
     }
     umount() {
       printf 'umount %s\n' "$*" >> "$cleanup_log"
@@ -700,6 +824,12 @@ test_cleanup_releases_owned_resources_in_order() {
   fi
 
   output="$(<"$cleanup_log")"
+  assert_contains "$output" "rm -f /mnt/etc/sudoers.d/99-installer-wheel-nopasswd" \
+    "Cleanup removes the current run's temporary passwordless sudo rule"
+  assert_not_contains "$output" "10-wheel" \
+    "Cleanup preserves password-required recovery sudo"
+  assert_occurs_before "$output" "rm -f" "umount" \
+    "Cleanup removes temporary sudo before unmounting the target"
   assert_contains "$output" "swapoff /dev/mapper/volgroup0-swap" \
     "Cleanup disables installer-owned swap"
   assert_contains "$output" "umount -R /mnt" \
@@ -802,12 +932,13 @@ test_dotfiles_bootstrap_minimal() {
   local parent_dir_line
   local runuser_line_prefix
   local base_profile_fragment
+  local test_profile_fragment
 
   output=$(run_script_dry_run "1")
   parent_dir_line="[DRY-RUN] Would execute: arch-chroot /mnt mkdir -p /home/testuser/src"
   runuser_line_prefix="[DRY-RUN] Would execute: arch-chroot /mnt runuser -u testuser --"
-  base_profile_fragment="/home/testuser/src/dotfiles/dotfiles.sh install -p base"
-  test_profile_fragment="/home/testuser/src/dotfiles/dotfiles.sh test -p base"
+  base_profile_fragment="/home/testuser/src/dotfiles/dotfiles.sh update -p base"
+  test_profile_fragment="/home/testuser/src/dotfiles/dotfiles.sh check -p base"
 
   assert_contains "$output" "$parent_dir_line" \
     "Dotfiles bootstrap creates parent directory"
@@ -826,18 +957,77 @@ test_dotfiles_bootstrap_minimal() {
     "Dotfiles profile is validated before install"
   assert_contains "$output" "$base_profile_fragment" \
     "Minimal mode uses the base dotfiles profile"
+  assert_occurs_before "$output" "$test_profile_fragment" "$base_profile_fragment" \
+    "Dotfiles check precedes update"
+  assert_contains "$output" "git -C /home/testuser/src/dotfiles config --local dotfiles.profile base" \
+    "The selected machine profile is saved for future dotfiles runs"
+  assert_contains "$output" "--root /home/testuser/src/dotfiles --non-interactive --no-repo-update --fail-on-skip -v" \
+    "Dotfiles update uses the checked checkout and requires complete unattended provisioning"
+  assert_not_contains "$output" "dotfiles.sh install" \
+    "Installer does not invoke the removed install command"
+  assert_not_contains "$output" "dotfiles.sh test" \
+    "Installer does not invoke the removed test command"
 }
 
 # Test 17: Dotfiles bootstrap uses current desktop profile flow
 test_dotfiles_bootstrap_desktop() {
   local output
   local desktop_profile_fragment
+  local selected_mode
 
-  output=$(run_script_dry_run "2")
-  desktop_profile_fragment="/home/testuser/src/dotfiles/dotfiles.sh install -p desktop"
+  desktop_profile_fragment="/home/testuser/src/dotfiles/dotfiles.sh update -p desktop"
 
-  assert_contains "$output" "$desktop_profile_fragment" \
-    "Desktop mode uses the desktop dotfiles profile"
+  for selected_mode in 2 3; do
+    output=$(run_script_dry_run "$selected_mode")
+    assert_contains "$output" "$desktop_profile_fragment" \
+      "Mode $selected_mode uses the desktop dotfiles profile"
+    assert_contains "$output" "quickshell" \
+      "Mode $selected_mode installs the current desktop shell"
+  done
+}
+
+test_dotfiles_validation_failure_stops_apply() {
+  local output
+  local exit_code
+
+  output="$({
+    user=testuser
+    as_user_dotfiles() {
+      printf 'dotfiles: %s\n' "$*"
+      return 19
+    }
+    as_user() {
+      printf 'unexpected user command: %s\n' "$*"
+    }
+    provision_dotfiles /home/testuser/src/dotfiles base
+  } 2>&1)"
+  exit_code=$?
+  assert_equals "19" "$exit_code" "Dotfiles check failure propagates"
+  assert_not_contains "$output" "update -p" "Failed validation never applies dotfiles"
+  assert_not_contains "$output" "unexpected user command" \
+    "Failed validation does not persist a profile"
+}
+
+test_recovery_setup_precedes_dotfiles() {
+  local output
+  local selected_mode
+
+  for selected_mode in 1 2 3; do
+    output=$(run_script_dry_run "$selected_mode")
+    assert_occurs_before "$output" "write /mnt/etc/sudoers.d/10-wheel" "passwd -l root" \
+      "Mode $selected_mode establishes sudo before locking root"
+    assert_occurs_before "$output" "pacman -Syu" "grub-mkconfig -o /boot/grub/grub.cfg" \
+      "Mode $selected_mode configures boot after the baseline package transaction"
+    assert_occurs_before "$output" "grub-mkconfig -o /boot/grub/grub.cfg" \
+      "==> Stage: dotfiles_bootstrap_prerequisites" \
+      "Mode $selected_mode finishes boot configuration before application bootstrap"
+    assert_occurs_before "$output" "write /mnt/etc/sudoers.d/10-wheel" \
+      "write /mnt/etc/sudoers.d/99-installer-wheel-nopasswd" \
+      "Mode $selected_mode retains password-required sudo underneath the temporary override"
+    assert_occurs_before "$output" "dotfiles.sh update" \
+      "Would remove /mnt/etc/sudoers.d/99-installer-wheel-nopasswd" \
+      "Mode $selected_mode removes the temporary override after dotfiles"
+  done
 }
 
 run_user_account_scenario() (
@@ -1078,6 +1268,7 @@ test_target_failure_reports_operation_and_output() {
     CURRENT_OPERATION="none"
     TEST_MODE=true
     RESUME=false
+    TARGET_PACKAGES_READY=true
     # shellcheck disable=SC2317,SC2329 # Invoked indirectly by run_required_step.
     mocked_target_failure() {
       echo "mock target stdout"
@@ -1102,6 +1293,8 @@ test_target_failure_reports_operation_and_output() {
     "Target command failure is written to the debug log"
   assert_contains "$debug_output" "operation=arch-chroot /mnt locale-gen" \
     "Debug log identifies the failed target operation"
+  assert_contains "$output" "rerun with --resume" \
+    "Failures after pacstrap explain the non-destructive recovery path"
 
   rm -f -- "$console_log" "$debug_log_path"
 }
@@ -1156,8 +1349,10 @@ test_resume_skips_destructive_and_pacstrap_stages() {
   assert_not_contains "$output" "pacstrap -K" \
     "Resume skips the original pacstrap package installation"
   assert_contains "$output" \
-    "arch-chroot /mnt pacman -Syu --needed --noconfirm base-devel git rust sudo" \
+    "arch-chroot /mnt pacman -Syu --needed --noconfirm base-devel git rustup sudo" \
     "Resume reconverges target bootstrap prerequisites"
+  assert_occurs_before "$output" "grub-mkconfig -o /boot/grub/grub.cfg" \
+    "dotfiles.sh update" "Resume also restores boot before applying dotfiles"
   assert_not_contains "$output" "sfdisk --wipe" \
     "Resume skips partitioning"
   assert_not_contains "$output" "cryptsetup luksFormat" \
@@ -1224,6 +1419,8 @@ test_script_syntax
 test_script_executable
 test_base_packages
 test_dotfiles_build_prerequisites
+test_bootstrap_package_migration
+test_user_toolchain_failure_stops_bootstrap
 test_gui_packages
 test_kernel_and_audio_packages
 test_vbox_packages
@@ -1252,6 +1449,8 @@ test_stdin_execution
 test_dry_run_uses_calculated_swap_size
 test_dotfiles_bootstrap_minimal
 test_dotfiles_bootstrap_desktop
+test_dotfiles_validation_failure_stops_apply
+test_recovery_setup_precedes_dotfiles
 test_fresh_user_creation
 test_existing_user_is_reconciled
 test_existing_dotfiles_checkout_is_updated_safely
